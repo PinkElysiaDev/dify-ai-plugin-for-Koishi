@@ -1,22 +1,49 @@
 {
   "name": "koishi-plugin-dify-ai",
-  "description": "A plugin behave based on dify",
-  "version": "0.0.1",
+  "description": "Invoke Dify apps (chatflow / workflow / completion) in Koishi with triggers and conversation bindings",
+  "version": "0.1.0",
+  "author": "PinkElysia",
+  "license": "MIT",
+  "homepage": "https://github.com/PinkElysiaDev/dify-ai-plugin-for-Koishi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PinkElysiaDev/dify-ai-plugin-for-Koishi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PinkElysiaDev/dify-ai-plugin-for-Koishi/issues"
+  },
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
-    "lib",
-    "dist"
+    "lib"
   ],
-  "license": "MIT",
-  "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "dify",
+    "workflow",
+    "chatflow"
   ],
-  "devDependencies": {},
   "peerDependencies": {
     "koishi": "^4.18.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "koishi": "^4.18.7"
+  },
+  "dependencies": {
+    "cron-parser": "^5.4.0"
+  },
+  "koishi": {
+    "description": {
+      "zh": "在 Koishi 中调用 Dify 应用（对话流/工作流/文本生成）：多条件触发器、会话绑定与变量系统",
+      "en": "Invoke Dify apps (chatflow/workflow/completion) in Koishi: multi-condition triggers, conversation bindings and variable system."
+    },
+    "service": {
+      "required": [
+        "database"
+      ]
+    }
   }
 }
