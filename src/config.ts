@@ -83,35 +83,35 @@ const conditionSchema = Schema.union([
   Schema.object({
     type: Schema.const('keyword-prefix').required(),
     keywords: Schema.string().role('textarea').required().description('关键词，每行一个')
-  }).description('关键词开头'),
+  }).default({ type: 'keyword-prefix', keywords: '' }).description('关键词开头'),
   Schema.object({
     type: Schema.const('keyword-contains').required(),
     keywords: Schema.string().role('textarea').required().description('关键词，每行一个')
-  }).description('包含关键词'),
+  }).default({ type: 'keyword-contains', keywords: '' }).description('包含关键词'),
   Schema.object({
     type: Schema.const('at-bot').required()
-  }).description('@ 机器人'),
+  }).default({ type: 'at-bot' }).description('@ 机器人'),
   Schema.object({
     type: Schema.const('at-user').required(),
     userIds: Schema.string().role('textarea').required().description('用户 ID，每行一个')
-  }).description('@ 指定用户'),
+  }).default({ type: 'at-user', userIds: '' }).description('@ 指定用户'),
   Schema.object({
     type: Schema.const('quote-bot').required()
-  }).description('引用机器人'),
+  }).default({ type: 'quote-bot' }).description('引用机器人'),
   Schema.object({
     type: Schema.const('quote-user').required(),
     userIds: Schema.string().role('textarea').required().description('用户 ID，每行一个')
-  }).description('引用指定用户'),
+  }).default({ type: 'quote-user', userIds: '' }).description('引用指定用户'),
   Schema.object({
     type: Schema.const('schedule').required(),
     cron: Schema.string().default('').description('Cron 表达式'),
     intervalMinutes: Schema.number().default(0).min(0).description('间隔分钟')
-  }).description('定时'),
+  }).default({ type: 'schedule', cron: '', intervalMinutes: 0 }).description('定时'),
   Schema.object({
     type: Schema.const('density').required(),
     densityCount: Schema.natural().default(5).description('条数阈值'),
     densityWindowSeconds: Schema.natural().default(60).description('窗口秒数')
-  }).description('消息密度')
+  }).default({ type: 'density', densityCount: 5, densityWindowSeconds: 60 }).description('消息密度')
 ])
 
 /** 会话字段变量的下拉选项（与 types.SessionField 一一对应） */
@@ -150,15 +150,15 @@ const variableSchema = Schema.union([
       Schema.object({
         key: Schema.const('history').required(),
         limit: Schema.natural().default(0).min(0).max(100).description('条数，0 用全局')
-      }),
+      }).default({ key: 'history', limit: 0 }),
       Schema.object({})
     ])
-  ]).description('会话字段'),
+  ]).default({ source: 'session', field: '', key: 'content' }).description('会话字段'),
   Schema.object({
     source: Schema.const('meta').required(),
     field: Schema.string().required().description('字段名'),
     key: metaKeySchema.default('triggerType').description('变量')
-  }).description('触发元信息')
+  }).default({ source: 'meta', field: '', key: 'triggerType' }).description('触发元信息')
 ])
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -359,10 +359,13 @@ export function normalizeConfig(config: Config): { apps: Map<string, AppConfigEn
   const rules: DifyRule[] = []
   for (const entry of config.rules ?? []) {
     if (!entry.name?.trim() || entry.enabled === false) continue
+    // 条目可能为 null：表单缺陷时期保存的脏数据形态，跳过即可
     const conditions = (entry.conditions ?? [])
+      .filter((condition): condition is ConditionEntry => condition != null)
       .map(toCondition)
       .filter((condition): condition is TriggerCondition => condition != null)
     const variables = (entry.variables ?? [])
+      .filter((variable): variable is VariableEntry => variable != null)
       .map(toVariable)
       .filter((variable): variable is VariableBinding => variable != null)
     rules.push({
