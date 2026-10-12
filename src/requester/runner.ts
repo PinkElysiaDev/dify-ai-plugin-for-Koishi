@@ -21,8 +21,8 @@ interface DifyReply {
   files: DifyFilePayload[]
 }
 
-/** 密度触发没有触发消息时使用的占位 query（Dify 要求非空） */
-const FALLBACK_QUERY = '（本次由系统触发，请参考变量中的上下文）'
+/** 纯 @ / 纯引用等无文本触发使用的占位 query（Dify 要求非空） */
+const FALLBACK_QUERY = '（本次触发无文本内容，请参考变量中的上下文）'
 
 /** workflow 被视为成功的状态 */
 const SUCCESS_STATUSES = ['succeeded', 'partial-succeeded']

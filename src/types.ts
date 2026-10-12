@@ -130,6 +130,8 @@ export interface FireContext {
   userId?: string
   triggerType: TriggerType
   rule: DifyRule
-  /** 作为 Dify query / content 变量的文本（已去掉触发词与 @ 前缀） */
+  /** 发给 Dify 的 query：统一消息格式（消息触发为单行，窗口触发为逐行拼接） */
   queryText: string
+  /** content 变量的值：消息触发为剥离文本，窗口触发为统一格式拼接 */
+  contentText: string
 }

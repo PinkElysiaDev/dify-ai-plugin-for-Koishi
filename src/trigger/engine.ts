@@ -1,6 +1,6 @@
 import { Context, Next, Session } from 'koishi'
 import { DifyRule, FireContext } from '../types'
-import { MessageHistory, buildHistoryEntry, formatHistoryEntries, HistoryEntry } from '../history'
+import { MessageHistory, buildHistoryEntry, formatHistoryEntries, formatHistoryEntry, HistoryEntry } from '../history'
 import { RequestRunner } from '../requester/runner'
 import { ConditionMatched, evaluateCondition, matchScope } from './conditions'
 import { DensityTracker } from './density'
@@ -60,7 +60,7 @@ export class TriggerEngine {
       const matched = this.matchRule(session)
       if (!matched) return nextMiddleware()
       // 已命中规则：异步执行，不阻塞中间件链，也不再向后传递
-      this.fireMessage(matched.rule, session, matched.condition)
+      this.fireMessage(matched.rule, session, matched.condition, entry)
     })
   }
 
@@ -81,7 +81,7 @@ export class TriggerEngine {
     void this.runner.run(fireCtx).catch((error) => this.ctx.logger.warn(error))
   }
 
-  private fireMessage(rule: DifyRule, session: Session, condition: ConditionMatched) {
+  private fireMessage(rule: DifyRule, session: Session, condition: ConditionMatched, entry: HistoryEntry | null) {
     this.run({
       session,
       platform: session.platform,
@@ -91,12 +91,14 @@ export class TriggerEngine {
       userId: session.userId,
       triggerType: condition.type,
       rule,
-      queryText: condition.queryText
+      // query 为该条消息的统一格式单行；纯 @ / 纯引用等无文本消息 entry 为空，由请求器占位兜底
+      queryText: entry ? formatHistoryEntry(entry) : '',
+      contentText: condition.queryText
     })
   }
 
   private fireDensity(rule: DifyRule, session: Session, entries: HistoryEntry[]) {
-    // 密度触发的 query 即窗口内这些消息的统一格式拼接
+    const windowText = formatHistoryEntries(entries)
     this.run({
       session,
       platform: session.platform,
@@ -106,7 +108,8 @@ export class TriggerEngine {
       userId: session.userId,
       triggerType: 'density',
       rule,
-      queryText: formatHistoryEntries(entries)
+      queryText: windowText,
+      contentText: windowText
     })
   }
 
@@ -116,6 +119,7 @@ export class TriggerEngine {
    */
   private fireSchedule(rule: DifyRule) {
     for (const channel of this.digest.take(rule)) {
+      const windowText = formatHistoryEntries(channel.entries)
       this.run({
         platform: channel.platform,
         selfId: channel.selfId,
@@ -123,7 +127,8 @@ export class TriggerEngine {
         guildId: channel.guildId,
         triggerType: 'schedule',
         rule,
-        queryText: channel.entries.map((entry) => `${entry.username}: ${entry.content}`).join('\n')
+        queryText: windowText,
+        contentText: windowText
       })
     }
   }

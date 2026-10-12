@@ -20,7 +20,7 @@ function resolveSessionField(key: SessionField, fireCtx: FireContext, now: strin
     case 'messageId':
       return session?.messageId ?? ''
     case 'content':
-      return fireCtx.queryText
+      return fireCtx.contentText
     case 'quoteContent':
       return parseTextSafe(session?.quote?.content)
     case 'quoteAuthorId':

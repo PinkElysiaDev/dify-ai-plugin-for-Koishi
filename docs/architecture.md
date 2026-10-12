@@ -68,16 +68,18 @@ external/dify-ai/
 
 ### 3.1 触发类型（8 种，判别联合 `TriggerCondition`）
 
-| 类型 | 判定 | 触发后的 query 文本 |
+| 类型 | 判定 | 触发后的 query |
 |---|---|---|
-| keyword-prefix | 消息以任一关键词开头 | 剥离关键词后的剩余（空则用全文） |
-| keyword-contains | 消息包含任一关键词 | 全文 |
-| at-bot | @ 了机器人（koishi atSelf 优先，元素级兜底） | 剥离 @ 后的文本 |
-| at-user | @ 了 userIds 中任一用户 | 全文 |
-| quote-bot | 引用的消息作者是机器人 | 剥离 @ 后的文本 |
-| quote-user | 引用的作者在 userIds 内 | 剥离 @ 后的文本 |
-| schedule | 到点时把窗口期内该规则作用域内各频道收到的消息合并为一次请求；某频道窗口内无消息则跳过 | 窗口消息按统一消息格式逐行拼接（§8） |
-| density | 窗口内消息数达到阈值即触发 | 窗口内这些消息按统一消息格式逐行拼接（§8） |
+| keyword-prefix | 消息以任一关键词开头 | 该条消息的统一格式（§8） |
+| keyword-contains | 消息包含任一关键词 | 该条消息的统一格式（§8） |
+| at-bot | @ 了机器人（koishi atSelf 优先，元素级兜底） | 该条消息的统一格式（§8） |
+| at-user | @ 了 userIds 中任一用户 | 该条消息的统一格式（§8） |
+| quote-bot | 引用的消息作者是机器人 | 该条消息的统一格式（§8） |
+| quote-user | 引用的作者在 userIds 内 | 该条消息的统一格式（§8） |
+| schedule | 到点时把窗口期内该规则作用域内各频道收到的消息合并为一次请求；某频道窗口内无消息则跳过 | 窗口消息按统一格式逐行拼接（§8） |
+| density | 窗口内消息数达到阈值即触发 | 窗口内这些消息按统一格式逐行拼接（§8） |
+
+query 一律是统一消息格式，原始信息（剥离触发词后的文本等）通过 content 变量映射获取（§8）。纯 @ / 纯引用等无文本触发用占位串兜底。
 
 规则内多个条件是**或**关系。配置页每条条件先在下拉里选类型、再填该类型对应的参数；加载时规范化为内部判别联合，缺参数的条件直接丢弃。
 
@@ -143,7 +145,7 @@ global                    → {appId}:global
 
 | 端点 | 应用类型 | 请求体 |
 |---|---|---|
-| POST `/chat-messages` | chat / agent-chat / advanced-chat（及未探测默认） | `inputs`、`query`（触发文本；极少数空 query 的触发用占位串兜底）、`response_mode`、`user`、`conversation_id`（空串=新建，携带=续接）、`files?`、`auto_generate_name` |
+| POST `/chat-messages` | chat / agent-chat / advanced-chat（及未探测默认） | `inputs`、`query`（统一消息格式；无文本触发用占位串兜底）、`response_mode`、`user`、`conversation_id`（空串=新建，携带=续接）、`files?`、`auto_generate_name` |
 | POST `/workflows/run` | workflow | `inputs`、`response_mode`、`user`、`files?` |
 | POST `/completion-messages` | completion | `inputs`、`response_mode`、`user`、`files?` |
 | POST `/files/upload` | — | FormData：`file`（Blob+文件名+mime）+ `user`；成功状态码 201 |
@@ -158,10 +160,10 @@ global                    → {appId}:global
 ```json
 {
   "inputs": {
-    "query": "今天天气怎么样",
+    "content": "今天天气怎么样",
     "chat_history": "[2026-10-04 12:00:05] 张三 (10086) [msg:Oz8xABC] 说：明天去哪玩"
   },
-  "query": "今天天气怎么样",
+  "query": "[2026-10-04 12:00:05] 张三 (10086) [msg:Oz8xABC] 说：问 今天天气怎么样",
   "response_mode": "blocking",
   "user": "koishi:onebot:g1:u9",
   "conversation_id": "9da1ec0f-0f4a-4b7e-8f2e-2c6d1a7b9e41",
@@ -443,7 +445,7 @@ global                    → {appId}:global
 | channelId | 频道 ID（私聊形如 private:12345） |
 | platform | 平台标识，如 onebot |
 | messageId | 触发消息的 ID（定时摘要触发为空） |
-| content | 触发文本，已去掉触发词与 @ 前缀；定时触发为窗口消息合并文本，密度触发为空 |
+| content | 触发文本，已去掉触发词与 @ 前缀；定时与密度触发为窗口消息的统一格式拼接 |
 | quoteContent | 被引用消息的纯文本 |
 | quoteAuthorId | 被引用消息的作者 ID |
 | username | 发送者用户名，缺省回退 userId |
@@ -461,7 +463,7 @@ global                    → {appId}:global
 
 ### 历史消息（统一消息格式）
 
-历史消息变量、定时摘要、密度触发三处的消息全部按同一格式逐行拼接：
+历史消息变量、各触发的 query（消息触发为该格式的单行形态）、定时摘要、密度触发全部按同一格式逐行拼接：
 
 ```
 [2026-10-04 12:00:05] 张三 (10086) [msg:Oz8xABC]（引用了 [2026-10-04 11:58:40] 李四 (10010) 说：有人吗）说：你看这条 [图片] 怎么样
@@ -556,7 +558,7 @@ dify-ai:
         - { dimension: guildId, value: '123456' }
         - { dimension: isDirect, value: 群聊 }
       variables:
-        - { source: session, field: query, key: content }
+        - { source: session, field: content, key: content }
         - { source: session, field: chat_history, key: history, limit: 0 }
         - { source: meta, field: scene, key: triggerType }
   parseElements: false

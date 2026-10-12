@@ -4,7 +4,7 @@ import { extractText } from '../utils/session-text'
 
 export interface ConditionMatched {
   type: MessageTriggerType
-  /** 触发后用作 Dify query / content 变量的文本（已去掉触发词与 @ 前缀） */
+  /** 触发后用作 content 变量的剥离文本（query 由引擎按统一消息格式另行构造） */
   queryText: string
 }
 
