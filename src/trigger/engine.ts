@@ -3,8 +3,7 @@ import { DifyRule, FireContext } from '../types'
 import { MessageHistory, buildHistoryEntry, formatHistoryEntries, formatHistoryEntry, HistoryEntry } from '../history'
 import { RequestRunner } from '../requester/runner'
 import { ConditionMatched, evaluateCondition, matchScope } from './conditions'
-import { DensityTracker } from './density'
-import { MessageDigest } from './digest'
+import { MessagePool } from './pool'
 import { RuleScheduler } from './scheduler'
 import { channelKeyOf } from '../utils/keys'
 
@@ -17,8 +16,7 @@ const SCHEDULER_TICK_MS = 1_000
  */
 export class TriggerEngine {
   private scheduler: RuleScheduler
-  private density: DensityTracker
-  private digest: MessageDigest
+  private pool: MessagePool
 
   constructor(
     private ctx: Context,
@@ -27,18 +25,20 @@ export class TriggerEngine {
     private rules: DifyRule[]
   ) {
     this.scheduler = new RuleScheduler(ctx, (rule) => this.fireSchedule(rule))
-    this.density = new DensityTracker((rule, session, entries) => this.fireDensity(rule, session, entries))
-    this.digest = new MessageDigest()
+    this.pool = new MessagePool()
   }
 
   start() {
     this.ctx.middleware((session, next) => this.handleMessage(session, next))
     // 秒级 tick 驱动定时触发；cordis timer 随上下文自动清理
     this.ctx.setInterval(() => this.scheduler.tick(), SCHEDULER_TICK_MS)
-    // bot 自己发出的回复也记入历史，保证历史变量双向可见
+    // bot 自己发出的回复也入历史与消息池：历史变量双向可见，摘要/密度 query 里标注为机器人发言
     this.ctx.on('send', (session) => {
       const entry = session.channelId ? buildHistoryEntry(session, 'assistant') : null
-      if (entry) this.history.recordEntry(channelKeyOf(session.platform, session.channelId), entry)
+      if (!entry) return
+      const key = channelKeyOf(session.platform, session.channelId)
+      this.history.recordEntry(key, entry)
+      this.pool.record(session, entry)
     })
     this.scheduler.sync(this.rules)
     this.ctx.logger.info('已加载 %d 条启用规则', this.rules.length)
@@ -48,12 +48,14 @@ export class TriggerEngine {
     // 忽略其它 bot（含自己）的消息
     if (this.ctx.bots[session.uid]) return next()
     if (!session.channelId) return next()
-    // 历史 / 密度 / 定时窗口对所有过路消息生效，无论是否命中规则；entry 统一构造一次三家共用
+    // 历史 / 消息池对所有过路消息生效，无论是否命中规则；entry 统一构造一次共用
     const entry = buildHistoryEntry(session)
     if (entry) {
       this.history.recordEntry(channelKeyOf(session.platform, session.channelId), entry)
-      this.density.record(this.rules, session, entry)
-      this.digest.record(this.rules, session, entry)
+      this.pool.record(session, entry)
+      for (const fire of this.pool.checkDensity(this.rules, session)) {
+        this.fireDensity(fire.rule, session, fire.entries)
+      }
     }
     // 命令优先：先让命令链处理，未被处理的消息再评估触发
     return next(async (nextMiddleware) => {
@@ -98,6 +100,7 @@ export class TriggerEngine {
   }
 
   private fireDensity(rule: DifyRule, session: Session, entries: HistoryEntry[]) {
+    // 密度只作触发依据：query 为取走的该频道全池消息
     const windowText = formatHistoryEntries(entries)
     this.run({
       session,
@@ -114,11 +117,11 @@ export class TriggerEngine {
   }
 
   /**
-   * 定时触发（消息摘要）：把窗口内有消息的每个频道各发一次请求。
-   * 频道身份取自窗口缓冲里记录的真实消息；窗口空（无消息）自然跳过。
+   * 定时触发（消息摘要）：把消息池内该规则作用域有消息的每个频道各发一次请求（取走即清空全池）。
+   * 频道身份取自池内最近一条消息；无消息的频道自然跳过。
    */
   private fireSchedule(rule: DifyRule) {
-    for (const channel of this.digest.take(rule)) {
+    for (const channel of this.pool.takeSchedule(rule)) {
       const windowText = formatHistoryEntries(channel.entries)
       this.run({
         platform: channel.platform,

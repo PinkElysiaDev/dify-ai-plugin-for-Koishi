@@ -53,7 +53,7 @@ export function evaluateCondition(
       return { type: 'quote-user', queryText: extractText(session, { excludeAt: true }) }
     }
     default:
-      // schedule / density 不是消息条件，由调度器与密度追踪器处理
+      // schedule / density 不是消息条件，由调度器与消息池处理
       return null
   }
 }

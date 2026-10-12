@@ -32,8 +32,7 @@ external/dify-ai/
 │   │   ├── engine.ts           中间件入口：作用域→条件→优先级→触发
 │   │   ├── conditions.ts       6 种消息条件的判定 + 作用域过滤（纯函数）
 │   │   ├── scheduler.ts        定时触发计时（不做错过补跑）
-│   │   ├── density.ts          滑动窗口消息密度触发
-│   │   └── digest.ts           定时窗口收集（规则×频道，取走即清空）
+│   │   └── pool.ts             频道消息池（密度与定时共用，取走即清空）
 │   ├── state/
 │   │   ├── tables.ts           唯一的表：dify_conversation（会话绑定）
 │   │   └── conversation.ts     会话状态机：bindingKey/difyUser 编码、扫描式重置
@@ -60,9 +59,9 @@ external/dify-ai/
 4. `ctx.on('ready')` 后：**并发探测** appType=auto 的应用（GET /info，结果存内存 Map，失败 warn 回退 chat 路径）→ `engine.start()`（注册消息中间件、秒级调度 tick、监听 bot 发送事件记历史）
 5. 注册 `dify.conv.reset` 维护命令（authority 3）
 
-**配置改动即插件重载**：cordis 监听到配置变化会整体重新 apply 插件（重新规范化、重新探测、定时窗口与调度状态短暂复位），无需任何热重载接口。
+**配置改动即插件重载**：cordis 监听到配置变化会整体重新 apply 插件（重新规范化、重新探测、消息池与调度状态短暂复位），无需任何热重载接口。
 
-销毁依赖 cordis 上下文自动清理；内存态（应用类型探测结果、历史缓冲、密度窗口、定时窗口）随实例消亡。
+销毁依赖 cordis 上下文自动清理；内存态（应用类型探测结果、历史缓冲、消息池）随实例消亡。
 
 ## 3. 触发器：从消息到触发
 
@@ -76,8 +75,8 @@ external/dify-ai/
 | at-user | @ 了 userIds 中任一用户 | 该条消息的统一格式（§8） |
 | quote-bot | 引用的消息作者是机器人 | 该条消息的统一格式（§8） |
 | quote-user | 引用的作者在 userIds 内 | 该条消息的统一格式（§8） |
-| schedule | 到点时把窗口期内该规则作用域内各频道收到的消息合并为一次请求；某频道窗口内无消息则跳过 | 窗口消息按统一格式逐行拼接（§8） |
-| density | 窗口内消息数达到阈值即触发 | 窗口内这些消息按统一格式逐行拼接（§8） |
+| schedule | 到点时把消息池内该规则作用域覆盖的各频道消息合并为一次请求；作用域内无消息则跳过 | 池内该频道全部消息按统一格式逐行拼接（§8） |
+| density | 池内时效窗口内的真人消息数达到阈值即触发 | 触发即取走该频道全部池内消息，按统一格式逐行拼接（§8） |
 
 query 一律是统一消息格式，原始信息（剥离触发词后的文本等）通过 content 变量映射获取（§8）。纯 @ / 纯引用等无文本触发用占位串兜底。
 
@@ -89,7 +88,7 @@ query 一律是统一消息格式，原始信息（剥离触发词后的文本�
 消息到达
   ├─ 是其它 bot（含自己）→ 放行
   ├─ 无 channelId → 放行
-  ├─ 记入历史缓冲 + 密度统计 + 定时窗口  ← 对所有过路消息生效
+  ├─ 记入历史缓冲 + 频道消息池  ← 对所有过路消息生效
   └─ 命令优先：next(callback)        ← 先让命令链消化
        └─ 命令未处理时：遍历规则（priority 降序，只含 enabled）
           ├─ 跳过无条件/未关联应用的规则
@@ -102,7 +101,7 @@ query 一律是统一消息格式，原始信息（剥离触发词后的文本�
 
 内部是六份名单（platforms/selfIds/guildIds/channelIds/users/excludeUsers，留空不限）加 isDirect 布尔；配置页是一张「维度 + 值」表格（维度含会话类型，见 §12），加载时按维度聚合成这六名单。guildId 匹配用 `guildId ?? channelId` 兜底；时间窗功能已于 2026-10 移除。
 
-**密度触发**靠窗口清空天然防连发：窗口内条数达到阈值即触发并清空该频道窗口，需重新积累。**定时触发**是消息摘要模型：过路消息持续记入各定时规则的作用域窗口（`MessageDigest`，按 规则×频道 缓冲，取走即清空——窗口即上次触发至今）；调度器每秒 tick，到点对窗口内有消息的每个频道各发一次请求（query 为窗口消息逐行拼接），无消息的频道跳过，不做错过的补跑。
+**密度与定时共用频道消息池**（`MessagePool`，trigger/pool.ts）：过路消息与 bot 自己的回复全量记入所属频道，密度与定时谁先满足条件谁**取走并清空**该频道全池，另一方重新积累。**密度**只作触发依据：池内时效窗口（条数阈值 + 窗口秒数）内的真人消息达到阈值即触发，bot 行与时效外条目不计入判定但会随全池进入 query。**定时**是消息摘要模型：调度器每秒 tick，到点对作用域内有消息的每个频道各发一次请求，无消息的频道跳过，不做错过的补跑。池按频道保留最近 256 条防无限增长。
 
 ## 4. 状态机：会话怎么绑定
 
@@ -123,7 +122,7 @@ global                    → {appId}:global
 |---|---|---|
 | appId | 应用配置的「应用 ID」，留空取应用名 | runner 以 appId ?? 应用名 传入 |
 | `platform` | 适配器平台标识（接 QQ 为 `onebot`） | session.platform |
-| `selfId` | bot 自身账号（QQ 号）；定时触发为窗口内消息所属的 bot | session.selfId |
+| `selfId` | bot 自身账号（QQ 号）；定时触发为池内最近一条消息所属的 bot | session.selfId |
 | guildId | 群号；私聊/无群概念平台回退 channelId（形如 `private:{QQ号}`） | session |
 
 **difyUser**（Dify 侧终端用户标识）不再入库，运行时按 bindingKey 字段推导：
@@ -429,11 +428,11 @@ global                    → {appId}:global
 **投递通道**（`deliver`）：
 
 - **消息触发**：`session.send(elements)` —— koishi core 把元素渲染为平台消息段，adapter-onebot 发 `send_group_msg`/`send_private_msg`（详见 §10）
-- **定时摘要触发**（无 session，频道来自消息窗口收集）：在该 `platform` 的在线 bot 里任选一个，`bot.sendMessage(channelId, elements)`
+- **定时摘要触发**（无 session，频道来自消息池记录）：在该 `platform` 的在线 bot 里任选一个，`bot.sendMessage(channelId, elements)`
 
 ## 8. 变量系统（`resolveVariables`）
 
-规则里每条变量映射是「Dify inputs 字段名 + 来源」，运行时把来源的值填进 `inputs[字段名]` 发给 Dify。配置时先选来源（会话字段 / 触发元信息），只显示该来源的配置项；变量从下拉里选，历史消息是会话字段下拉中的一项，「条数」数字框常显在会话字段分支内、选历史消息时生效。可用变量如下。
+规则里每条变量映射是「Dify inputs 字段名 + 来源」，运行时把来源的值填进 `inputs[字段名]` 发给 Dify。配置时先选来源（会话字段 / 历史消息 / 触发元信息），只显示该来源的配置项；历史消息是独立分支，自带「条数」配置（0 用全局）。可用变量如下。
 
 ### 会话字段
 
@@ -445,13 +444,16 @@ global                    → {appId}:global
 | channelId | 频道 ID（私聊形如 private:12345） |
 | platform | 平台标识，如 onebot |
 | messageId | 触发消息的 ID（定时摘要触发为空） |
-| content | 触发文本，已去掉触发词与 @ 前缀；定时与密度触发为窗口消息的统一格式拼接 |
+| content | 触发文本，已去掉触发词与 @ 前缀；定时与密度触发为池内消息的统一格式拼接 |
 | quoteContent | 被引用消息的纯文本 |
 | quoteAuthorId | 被引用消息的作者 ID |
 | username | 发送者用户名，缺省回退 userId |
 | timestamp | 触发时刻，ISO 8601 字符串 |
 | isDirect | 是否私聊，true / false |
-| 历史消息 | 该频道最近聊天记录，「条数」配置选此项时生效（0 用全局）；值见下方统一消息格式 |
+
+### 历史消息
+
+独立来源分支，字段名 + 条数（0 用全局「历史消息条数」）。值 = 该频道最近聊天记录按下方统一消息格式逐行拼接；定时与密度触发的 content 变量同样是池内消息的统一格式拼接。
 
 ### 触发元信息
 
@@ -468,13 +470,14 @@ global                    → {appId}:global
 ```
 [2026-10-04 12:00:05] 张三 (10086) [msg:Oz8xABC]（引用了 [2026-10-04 11:58:40] 李四 (10010) 说：有人吗）说：你看这条 [图片] 怎么样
 [2026-10-04 12:00:10] 王五 (10011) [msg:Oz9xDEF] 说：大家好
+[2026-10-04 12:00:15] 你自己的发言 (bot1) [msg:Oz7xGHI] 说：已收到
 ```
 
 - 字段序：时间 → 昵称 → 用户 ID → 消息 ID →（引用段，无引用则整段省略）→ 说： → 内容
 - 引用段与外层同构但不展示消息 ID；时间为本地时区秒级
 - 图片元素渲染为 [图片] 占位符
-- bot 自己的回复同样入记录（昵称 bot、用户 ID 为 bot 账号）
-- 条数在变量映射里指定，0 用全局「历史消息条数」；缓冲容量为全局值 ×2（下限 64）
+- bot 自己的回复同样入记录（历史变量与消息池均含），昵称标注为 你自己的发言、用户 ID 为 bot 账号
+- 条数在历史消息分支里指定，0 用全局「历史消息条数」；缓冲容量为全局值 ×2（下限 64）
 - 纯内存，重启清空
 
 ## 9. 文件上传管线（`uploadMessageFiles`）
@@ -498,7 +501,7 @@ global                    → {appId}:global
 
 | OneBot 字段 | 内容来源 |
 |---|---|
-| `group_id` / `user_id` | 消息触发 ← session.channelId；定时摘要 ← 窗口收集时记录的频道 |
+| `group_id` / `user_id` | 消息触发 ← session.channelId；定时摘要 ← 消息池记录的频道 |
 | `message` 段数组 | renderReply 产出的元素逐段翻译；image 段 url ← Dify outputs 的文件 url |
 | reply 段 | `quoteTrigger` 开启时 `h.quote(quoteMessageId)`，quoteMessageId ← session.messageId |
 | 发送身份 | 消息触发=收到消息的那个 bot；定时摘要=该平台任一在线 bot |
@@ -533,7 +536,7 @@ global                    → {appId}:global
 | 回复行为 | 解析回复中的消息元素 / 引用触发消息 / 分段长度 / 上传消息中的文件 |
 | 运行参数 | 请求超时（默认 300000ms）/ 历史消息条数（默认 20）/ 失败时提示错误 |
 
-变量映射每条先选来源（会话字段 / 触发元信息），只显示该来源的配置项；变量从下拉里选，「条数」常显在会话字段分支内、选历史消息时生效（0 表示用全局值）。
+变量映射每条先选来源（会话字段 / 历史消息 / 触发元信息），只显示该来源的配置项；历史消息分支自带条数（0 表示用全局值）。
 
 koishi.yml 等价示例（配置页填写后生成同样的数据）：
 
@@ -559,7 +562,7 @@ dify-ai:
         - { dimension: isDirect, value: 群聊 }
       variables:
         - { source: session, field: content, key: content }
-        - { source: session, field: chat_history, key: history, limit: 0 }
+        - { source: history, field: chat_history, limit: 0 }
         - { source: meta, field: scene, key: triggerType }
   parseElements: false
   quoteTrigger: true
@@ -574,7 +577,7 @@ dify-ai:
 
 ## 13. 已知设计取舍
 
-- **配置即全部**：应用/规则/行为均在 koishi schema，配置改动触发插件整体重载（定时窗口与调度状态短暂复位）；数据库仅存会话绑定。
+- **配置即全部**：应用/规则/行为均在 koishi schema，配置改动触发插件整体重载（消息池与调度状态短暂复位）；数据库仅存会话绑定。
 - **blocking 单一模式**：放弃流式逐字输出（换实现简单与稳定）；长任务受 requestTimeout 约束。
 - **会话绑定维度是应用**：同一应用同一会话的规则共享 Dify 对话；需要隔离时应建不同应用或调整 conversationScope。
 - **历史是内存态**：重启清空；密度与历史变量短暂退化。

@@ -33,9 +33,10 @@ export type ConditionEntry =
   | { type: 'schedule'; cron?: string; intervalMinutes?: number }
   | { type: 'density'; densityCount?: number; densityWindowSeconds?: number }
 
-/** 变量映射的条件分支形态：先选来源分支，再填该分支的字段（历史消息是会话字段下的一项） */
+/** 变量映射的条件分支形态：先选来源分支，再填该分支的字段（历史消息是独立分支） */
 export type VariableEntry =
-  | { source: 'session'; field: string; key: string; limit?: number }
+  | { source: 'session'; field: string; key: string }
+  | { source: 'history'; field: string; limit?: number }
   | { source: 'meta'; field: string; key: string }
 
 /** 作用域的一行：维度 + 值 */
@@ -127,8 +128,7 @@ const sessionKeySchema = Schema.union([
   Schema.const('quoteAuthorId').description('被引用作者'),
   Schema.const('username').description('用户名'),
   Schema.const('timestamp').description('触发时间'),
-  Schema.const('isDirect').description('是否私聊'),
-  Schema.const('history').description('历史消息')
+  Schema.const('isDirect').description('是否私聊')
 ])
 
 /** 触发元信息变量的下拉选项（与 types.MetaField 一一对应） */
@@ -143,9 +143,13 @@ const variableSchema = Schema.union([
   Schema.object({
     source: Schema.const('session').required(),
     field: Schema.string().required().description('字段名'),
-    key: sessionKeySchema.default('content').description('变量'),
-    limit: Schema.natural().default(0).min(0).max(100).description('条数，选历史消息时生效')
-  }).default({ source: 'session', field: '', key: 'content', limit: 0 }).description('会话字段'),
+    key: sessionKeySchema.default('content').description('变量')
+  }).default({ source: 'session', field: '', key: 'content' }).description('会话字段'),
+  Schema.object({
+    source: Schema.const('history').required(),
+    field: Schema.string().required().description('字段名'),
+    limit: Schema.natural().default(0).min(0).max(100).description('条数，0 用全局')
+  }).default({ source: 'history', field: '', limit: 0 }).description('历史消息'),
   Schema.object({
     source: Schema.const('meta').required(),
     field: Schema.string().required().description('字段名'),
@@ -331,10 +335,12 @@ function toVariable(entry: VariableEntry): VariableBinding | null {
   if (entry.source === 'meta') {
     return { field, source: { type: 'meta', key: (entry.key || 'triggerType') as MetaField } }
   }
-  if (entry.key === 'history') {
+  if (entry.source === 'history') {
     const limit = Number(entry.limit)
     return { field, source: { type: 'history', ...(limit > 0 ? { limit } : {}) } }
   }
+  // 旧版把历史消息塞在会话字段下拉里（source:session + key:history），不做兼容，直接丢弃
+  if (entry.key === 'history') return null
   return { field, source: { type: 'session', key: (entry.key || 'content') as SessionField } }
 }
 

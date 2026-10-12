@@ -64,14 +64,14 @@ function buildQuote(session: Session): QuotedMessage | undefined {
   }
 }
 
-/** 从会话消息构造记录条目（历史缓冲 / 密度窗口 / 定时窗口共用） */
+/** 从会话消息构造记录条目（历史缓冲 / 消息池共用）；assistant 行标注为机器人自己的发言 */
 export function buildHistoryEntry(session: Session, role: 'user' | 'assistant' = 'user'): HistoryEntry | null {
   const content = extractTextWithPlaceholders(session)
   if (!content) return null
   return {
     role,
     userId: role === 'assistant' ? session.selfId : session.userId ?? '未知用户',
-    username: role === 'assistant' ? 'bot' : session.username || session.userId || '用户',
+    username: role === 'assistant' ? '你自己的发言' : session.username || session.userId || '用户',
     messageId: session.messageId,
     content,
     timestamp: session.timestamp ?? Date.now(),
