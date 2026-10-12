@@ -115,8 +115,13 @@ const conditionSchema = Schema.union([
   }).default({ type: 'density', densityCount: 5, densityWindowSeconds: 60 }).description('消息密度')
 ])
 
-/** 会话字段变量的下拉选项（与 types.SessionField 一一对应） */
+/**
+ * 会话字段变量的下拉选项（与 types.SessionField 一一对应）。
+ * 默认值是哨兵「无」：任何真实变量都不与默认值相等，避免表单运行时
+ * 「值等于默认值即置 null」的机制吞掉真实选择。
+ */
 const sessionKeySchema = Schema.union([
+  Schema.const('none').description('无'),
   Schema.const('userId').description('用户 ID'),
   Schema.const('botId').description('Bot ID'),
   Schema.const('guildId').description('群聊 ID'),
@@ -131,20 +136,25 @@ const sessionKeySchema = Schema.union([
   Schema.const('isDirect').description('是否私聊')
 ])
 
-/** 触发元信息变量的下拉选项（与 types.MetaField 一一对应） */
+/** 触发元信息变量的下拉选项（与 types.MetaField 一一对应；默认哨兵「无」） */
 const metaKeySchema = Schema.union([
+  Schema.const('none').description('无'),
   Schema.const('triggerType').description('触发类型'),
   Schema.const('ruleName').description('规则名'),
   Schema.const('triggerTime').description('触发时间')
 ])
 
-/** 变量映射分支：选来源后仅显示该来源的配置项（纯对象结构，嵌套 intersect 在表单中会丢值） */
+/**
+ * 变量映射分支：选来源后仅显示该来源的配置项（纯对象结构）。
+ * 历史消息是独立分支，条数只在选中该分支时显示——值驱动的条件显示
+ * 在表单运行时不可实现（intersect 结构两度实证丢值），分支选择是条件下唯一联动方式。
+ */
 const variableSchema = Schema.union([
   Schema.object({
     source: Schema.const('session').required(),
     field: Schema.string().required().description('字段名'),
-    key: sessionKeySchema.default('content').description('变量')
-  }).default({ source: 'session', field: '', key: 'content' }).description('会话字段'),
+    key: sessionKeySchema.default('none').description('变量')
+  }).default({ source: 'session', field: '', key: 'none' }).description('会话字段'),
   Schema.object({
     source: Schema.const('history').required(),
     field: Schema.string().required().description('字段名'),
@@ -153,8 +163,8 @@ const variableSchema = Schema.union([
   Schema.object({
     source: Schema.const('meta').required(),
     field: Schema.string().required().description('字段名'),
-    key: metaKeySchema.default('triggerType').description('变量')
-  }).default({ source: 'meta', field: '', key: 'triggerType' }).description('触发元信息')
+    key: metaKeySchema.default('none').description('变量')
+  }).default({ source: 'meta', field: '', key: 'none' }).description('触发元信息')
 ])
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -333,14 +343,16 @@ function toVariable(entry: VariableEntry): VariableBinding | null {
   const field = entry.field?.trim()
   if (!field) return null
   if (entry.source === 'meta') {
+    // 哨兵「无」表示尚未选择变量，条目不生效
+    if (entry.key === 'none') return null
     return { field, source: { type: 'meta', key: (entry.key || 'triggerType') as MetaField } }
   }
   if (entry.source === 'history') {
     const limit = Number(entry.limit)
     return { field, source: { type: 'history', ...(limit > 0 ? { limit } : {}) } }
   }
-  // 旧版把历史消息塞在会话字段下拉里（source:session + key:history），不做兼容，直接丢弃
-  if (entry.key === 'history') return null
+  // 「无」未选择；历史消息塞在会话字段下拉里的旧形态（≤0.1.2 与 intersect 试验期）不做兼容
+  if (entry.key === 'none' || entry.key === 'history') return null
   return { field, source: { type: 'session', key: (entry.key || 'content') as SessionField } }
 }
 
