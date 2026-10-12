@@ -138,22 +138,14 @@ const metaKeySchema = Schema.union([
   Schema.const('triggerTime').description('触发时间')
 ])
 
-/** 变量映射分支：选来源后仅显示该来源的配置项；变量选「历史消息」时展开条数 */
+/** 变量映射分支：选来源后仅显示该来源的配置项（纯对象结构，嵌套 intersect 在表单中会丢值） */
 const variableSchema = Schema.union([
-  Schema.intersect([
-    Schema.object({
-      source: Schema.const('session').required(),
-      field: Schema.string().required().description('字段名'),
-      key: sessionKeySchema.default('content').description('变量')
-    }),
-    Schema.union([
-      Schema.object({
-        key: Schema.const('history').required(),
-        limit: Schema.natural().default(0).min(0).max(100).description('条数，0 用全局')
-      }).default({ key: 'history', limit: 0 }),
-      Schema.object({})
-    ])
-  ]).default({ source: 'session', field: '', key: 'content' }).description('会话字段'),
+  Schema.object({
+    source: Schema.const('session').required(),
+    field: Schema.string().required().description('字段名'),
+    key: sessionKeySchema.default('content').description('变量'),
+    limit: Schema.natural().default(0).min(0).max(100).description('条数，选历史消息时生效')
+  }).default({ source: 'session', field: '', key: 'content', limit: 0 }).description('会话字段'),
   Schema.object({
     source: Schema.const('meta').required(),
     field: Schema.string().required().description('字段名'),
