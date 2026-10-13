@@ -17,13 +17,14 @@ function splitText(text: string, maxLength: number): string[] {
   const lines = text.split('\n')
   const segments: string[] = []
   let current = ''
+  const flush = () => {
+    if (current) segments.push(current)
+  }
   for (const line of lines) {
     // 单行超长时硬切
     if (line.length > maxLength) {
-      if (current) {
-        segments.push(current)
-        current = ''
-      }
+      flush()
+      current = ''
       for (let i = 0; i < line.length; i += maxLength) {
         segments.push(line.slice(i, i + maxLength))
       }
@@ -36,7 +37,7 @@ function splitText(text: string, maxLength: number): string[] {
       current = current ? `${current}\n${line}` : line
     }
   }
-  if (current) segments.push(current)
+  flush()
   return segments
 }
 

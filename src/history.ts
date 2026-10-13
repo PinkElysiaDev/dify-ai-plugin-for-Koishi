@@ -49,7 +49,8 @@ export function formatHistoryEntry(entry: HistoryEntry): string {
     ? `（引用了 [${formatTimestamp(entry.quote.timestamp)}] ${entry.quote.username} (${entry.quote.userId}) 说：${entry.quote.content}）`
     : ''
   const messageId = entry.messageId ? ` [msg:${entry.messageId}]` : ''
-  return `[${formatTimestamp(entry.timestamp)}] ${entry.username} (${entry.userId})${messageId}${quote}${quote ? '' : ' '}说：${entry.content}`
+  const separator = quote ? '' : ' '
+  return `[${formatTimestamp(entry.timestamp)}] ${entry.username} (${entry.userId})${messageId}${quote}${separator}说：${entry.content}`
 }
 
 /** 多条消息逐行拼接 */

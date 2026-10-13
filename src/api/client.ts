@@ -34,11 +34,12 @@ export class DifyClient {
     return this.app.apiURL.replace(/\/+$/, '') + path
   }
 
+  private authHeaders() {
+    return { Authorization: `Bearer ${this.app.apiKey}` }
+  }
+
   private buildJsonHeaders() {
-    return {
-      Authorization: `Bearer ${this.app.apiKey}`,
-      'Content-Type': 'application/json'
-    }
+    return { ...this.authHeaders(), 'Content-Type': 'application/json' }
   }
 
   private errorFrom(status: number, data: any, statusText = ''): DifyApiError {
@@ -122,7 +123,7 @@ export class DifyClient {
     )
     form.set('user', user)
     const res = await this.http('POST', this.buildUrl('/files/upload'), {
-      headers: { Authorization: `Bearer ${this.app.apiKey}` },
+      headers: this.authHeaders(),
       data: form,
       timeout: this.timeout,
       validateStatus: () => true
