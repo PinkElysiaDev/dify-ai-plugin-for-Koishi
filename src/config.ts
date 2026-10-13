@@ -10,7 +10,6 @@ import {
   TriggerScope,
   VariableBinding
 } from './types'
-import { quote } from '@satorijs/element/jsx-runtime'
 
 /* ================= schema 形态（配置页所见） ================= */
 
@@ -192,28 +191,61 @@ const variableSchema = Schema.union([
 ])
 
 /**
- * 引用触发的条件分支（顶层 union，官方 union-tagged 位置）：开关开启时展示耗时阈值。
- * 阈值默认 -1：规避「值等于默认值被置 null」的表单机制吞掉 0（-1 与 0 同为总是引用）。
+ * 0.1.7 开关的 union-tagged 对象形态迁移：布尔透传，对象按 mode 归并。
+ * 不设 hidden：表单 union 对 transform 分支执行回调，旧对象在配置页打开时
+ * 即洗值为布尔，下次保存落盘的就是布尔，无需手改配置文件。
  */
-const quoteBranchSchema = Schema.union([
+const legacySwitch = Schema.transform(
+  Schema.any(),
+  (value: any) => (typeof value === 'boolean' ? value : value?.mode !== 'off')
+)
+
+/**
+ * 开关字段：boolean 分支必须带与外层一致的 default——表单把等于默认值的一侧
+ * 折叠为 null，分支无 default 时开关落入三态中间态（无/开/关）；第二分支迁移旧对象。
+ */
+function switchSchema(defaultValue: boolean) {
+  return Schema.union([Schema.boolean().default(defaultValue), legacySwitch]).default(defaultValue)
+}
+
+/**
+ * 引用开关与耗时阈值成组（嵌套 intersect，multi-bot-controller 范式）：
+ * 开关段在前、条件分支紧随其后，阈值渲染在开关正下方。
+ * 判别不设 required：开关默认开与判别同向，required 会让 null/缺键
+ * （表单「值等于默认值即置 null」机制与未保存键的常态）掉入空分支，开关开着字段却不显示。
+ * 阈值默认 -1：规避「值等于默认值即置 null」的表单机制吞掉 0（-1 与 0 同为总是引用）。
+ */
+const quoteSwitchSchema = Schema.intersect([
   Schema.object({
-    quote: Schema.const(true).required(),
-    minElapsedSeconds: Schema.number().min(-1).default(-1).description('回复耗时多少秒才引用，0 总是引用')
+    quote: switchSchema(true).description('引用触发消息')
   }),
-  Schema.object({})
+  Schema.union([
+    Schema.object({
+      quote: Schema.const(true),
+      minElapsedSeconds: Schema.number().min(-1).default(-1).description('回复耗时多少秒才引用，0 总是引用')
+    }),
+    Schema.object({})
+  ])
 ])
 
 /**
- * 上传消息文件的条件分支（顶层 union）：开关开启时展示数量与单文件大小上限。
+ * 上传开关与数量、大小上限成组（同引用组的嵌套结构）。
+ * 判别 required 方向与 default 配合（null 须落向与 default 语义一致的分支）：
+ * 开关默认关与判别反向，required 让 null/缺键掉入空分支＝关（与引用组方向相反）。
  * 上限默认 -1 规避 0 被表单默认值机制吞掉（-1 与 0 同为不限，仍受 Dify 各类型上限约束）。
  */
-const uploadBranchSchema = Schema.union([
+const uploadSwitchSchema = Schema.intersect([
   Schema.object({
-    uploadFiles: Schema.const(true).required(),
-    maxCount: Schema.number().min(-1).default(-1).description('数量上限，0 不限'),
-    maxSizeMb: Schema.number().min(-1).default(-1).description('单文件大小上限 MB，0 不限')
+    uploadFiles: switchSchema(false).description('上传消息中的文件')
   }),
-  Schema.object({})
+  Schema.union([
+    Schema.object({
+      uploadFiles: Schema.const(true).required(),
+      maxCount: Schema.number().min(-1).default(-1).description('数量上限，0 不限'),
+      maxSizeMb: Schema.number().min(-1).default(-1).description('单文件大小上限 MB，0 不限')
+    }),
+    Schema.object({})
+  ])
 ])
 
 /**
@@ -307,14 +339,11 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     parseElements: Schema.boolean().default(false).description('解析回复中的消息元素'),
-    quote: Schema.boolean().default(true).description('引用触发消息'),
-    maxSegmentLength: Schema.number().min(-1).default(-1).description('分段长度，0 不分段'),
-    uploadFiles: Schema.boolean().default(true).description('上传消息中的文件')
+    maxSegmentLength: Schema.number().min(-1).default(-1).description('分段长度，0 不分段')
   }).description('回复行为'),
 
-  // 开关开启时展示对应条件字段（官方 union-tagged 顶层位置）
-  quoteBranchSchema,
-  uploadBranchSchema,
+  quoteSwitchSchema,
+  uploadSwitchSchema,
 
   Schema.object({
     requestTimeout: Schema.natural().role('ms').default(300000).description('请求超时'),
@@ -452,11 +481,11 @@ function toVariable(entry: VariableEntry): VariableBinding | null {
 }
 
 /**
- * 上传消息文件配置（平铺开关）。数量与单文件大小 0 与 -1 均为不限，
- * 大小仍与 Dify 各类型上限取较小值。
+ * 上传消息文件配置（平铺开关，默认关闭：显式开启才上传）。数量与单文件大小
+ * 0 与 -1 均为不限，大小仍与 Dify 各类型上限取较小值。
  */
 export function resolveUploadConfig(config: Config): { enabled: boolean; maxCount: number; maxMb: number } {
-  if (config.uploadFiles === false) return { enabled: false, maxCount: 0, maxMb: 0 }
+  if (config.uploadFiles !== true) return { enabled: false, maxCount: 0, maxMb: 0 }
   return {
     enabled: true,
     maxCount: Number(config.maxCount) || 0,
@@ -498,6 +527,8 @@ function toCooldown(entry: CooldownEntry | undefined): CooldownSetting | null {
 export function normalizeConfig(
   config: Config
 ): { apps: Map<string, AppConfigEntry>; rules: DifyRule[]; cooldown: CooldownSetting | null } {
+  // schema 校验失败时 cordis 仍会以 null config 调用 apply，兜底为空配置
+  config ??= {} as Config
   const apps = new Map<string, AppConfigEntry>()
   for (const app of config.apps ?? []) {
     if (app.name?.trim() && !apps.has(app.name)) apps.set(app.name, app)

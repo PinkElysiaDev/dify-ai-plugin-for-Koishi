@@ -445,9 +445,9 @@ global                    → {appId}:global
 | `parseElements` | `h.parse(text)` vs `h.text(text)` | 开启时回复文本按消息元素解析（可输出图片/At 等）；关闭时用 `h.text` 保证 LLM 输出里的尖括号按字面发送不被转义 |
 | `quote` | `h.quote(messageId)` | **布尔开关**：开启后**回复耗时达到阈值秒数才引用**触发消息（`minElapsedSeconds` 条件字段，0 或 -1 总是引用），引用加在回复首段。**定时与密度触发不引用**（没有单一触发消息），与元素解析互不干扰 |
 | `maxSegmentLength` | 多条消息逐条发送 | 超长回复按长度切成多段（单行超长硬切），每段独立成一条消息发出；0 或 -1 不分段 |
-| `uploadFiles` | 消息元素 `session.elements` | **布尔开关**：开启后提取消息里的 img/audio/video/file 元素上传给 Dify（§9）；`maxCount` / `maxSizeMb` 条件字段，0 或 -1 均为不限（大小仍受 Dify 各类型上限约束）；被丢弃的图片在 query 占位符上注明已丢弃 |
+| `uploadFiles` | 消息元素 `session.elements` | **布尔开关，默认关闭**：开启后提取消息里的 img/audio/video/file 元素上传给 Dify（§9）；`maxCount` / `maxSizeMb` 条件字段，0 或 -1 均为不限（大小仍受 Dify 各类型上限约束）；被丢弃的图片在 query 占位符上注明已丢弃 |
 
-`quote` 的耗时从请求发起计到拿到响应（渲染前判定）， messageId 即触发消息的 `session.messageId`（OneBot 场景就是 message_id）；合并触发（merged）引用缓冲内首条消息。0.1.x 的布尔开关 `quoteTrigger` 在配置层透传保留时自动迁移（false → 关闭，true/缺省 → 开启且总是引用）。
+`quote` 的耗时从请求发起计到拿到响应（渲染前判定）， messageId 即触发消息的 `session.messageId`（OneBot 场景就是 message_id）；合并触发（merged）引用缓冲内首条消息。0.1.x 的布尔开关 `quoteTrigger` 在配置层透传保留时自动迁移（false → 关闭，true/缺省 → 开启且总是引用）。0.1.7 的对象形态（`quote`/`uploadFiles` 为 `{mode: on|off, ...}`）在 schema 层自动洗回布尔（`off` → 关，其余 → 开），对象内嵌的阈值/上限回落默认值。
 
 **投递通道**（`deliver`）：
 
@@ -572,7 +572,7 @@ global                    → {appId}:global
 |---|---|
 | `group_id` / `user_id` | 消息触发 ← session.channelId；定时摘要 ← 消息池记录的频道 |
 | `message` 段数组 | renderReply 产出的元素逐段翻译；image 段 url ← Dify outputs 的文件 url |
-| reply 段 | `quoteTrigger` 开启时 `h.quote(quoteMessageId)`，quoteMessageId ← session.messageId |
+| reply 段 | `quote` 开启时 `h.quote(quoteMessageId)`，quoteMessageId ← session.messageId |
 | 发送身份 | 消息触发=收到消息的那个 bot；定时摘要=该平台任一在线 bot |
 
 ## 11. 数据库与表结构
@@ -635,14 +635,12 @@ dify-ai:
         - { source: meta, field: scene, key: triggerType }
         - { source: constant, field: persona, value: '你是一名群聊助手' }
   parseElements: false
-  quote:
-    mode: on
-    minElapsedSeconds: 10
+  quote: true
+  minElapsedSeconds: 10
   maxSegmentLength: 0
-  uploadFiles:
-    mode: on
-    maxCount: 4
-    maxSizeMb: 8
+  uploadFiles: true
+  maxCount: 4
+  maxSizeMb: 8
   requestTimeout: 300000
   historyLimit: 20
   sendErrors: false
