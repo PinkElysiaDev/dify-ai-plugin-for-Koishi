@@ -10,6 +10,7 @@ import {
   TriggerScope,
   VariableBinding
 } from './types'
+import { quote } from '@satorijs/element/jsx-runtime'
 
 /* ================= schema 形态（配置页所见） ================= */
 
@@ -60,10 +61,12 @@ export interface RuleEntry {
   variables: VariableEntry[]
 }
 
-/** 引用触发消息的条件分支形态：关闭时空分支，开启时按耗时阈值决定是否引用 */
+/** 引用触发消息的布尔开关形态（开关字段名即配置项名 quote）；兼容 0.1.x 布尔与 mode 形态（仅加载迁移） */
 export type QuoteEntry =
+  | { quote: boolean; minElapsedSeconds?: number }
+  | boolean
   | { mode: 'off' }
-  | { mode: 'on'; minElapsedSeconds: number }
+  | { mode: 'on'; minElapsedSeconds?: number }
 
 /** 触发后冷却的条件分支形态 */
 export type CooldownEntry =
@@ -209,11 +212,11 @@ const variableSchema = Schema.union([
 const quoteSchema = Schema.union([
   Schema.intersect([
     Schema.object({
-      enabled: Schema.boolean().default(true).description('开启')
+      quote: Schema.boolean().default(true)
     }),
     Schema.union([
       Schema.object({
-        enabled: Schema.const(true).required(),
+        quote: Schema.const(true).required(),
         minElapsedSeconds: Schema.number().min(-1).default(-1).description('回复耗时多少秒才引用，0 总是引用')
       }),
       Schema.object({})
@@ -225,7 +228,7 @@ const quoteSchema = Schema.union([
     mode: Schema.const('on').required(),
     minElapsedSeconds: Schema.number().min(-1).default(-1)
   })
-]).default({ enabled: true, minElapsedSeconds: -1 })
+]).default({ quote: true, minElapsedSeconds: -1 })
 
 /**
  * 触发后冷却分支：全局一份，作用于所有规则。
@@ -255,7 +258,7 @@ const cooldownSchema = Schema.union([
 const uploadSchema = Schema.union([
   Schema.intersect([
     Schema.object({
-      enabled: Schema.boolean().default(true).description('开启')
+      enabled: Schema.boolean().default(true)
     }),
     Schema.union([
       Schema.object({
@@ -507,16 +510,16 @@ export function resolveUploadConfig(config: Config): { enabled: boolean; maxCoun
  * 阈值 -1 与 0 同为总是引用（比较 elapsed >= 阈值 自然兼容）。
  */
 export function resolveQuoteConfig(config: Config): { enabled: boolean; minElapsedSeconds: number } {
-  const quote: any = config.quote
-  if (typeof quote === 'boolean') return { enabled: quote, minElapsedSeconds: 0 }
-  if (quote?.mode === 'off') return { enabled: false, minElapsedSeconds: 0 }
-  const threshold = Number(quote?.minElapsedSeconds) || 0
+  const entry: any = config.quote
+  if (typeof entry === 'boolean') return { enabled: entry, minElapsedSeconds: 0 }
+  if (entry?.mode === 'off') return { enabled: false, minElapsedSeconds: 0 }
+  const threshold = Number(entry?.minElapsedSeconds) || 0
   // quoteTrigger 透传且阈值未被改动（默认形态）时以旧布尔为准（mode 形态与开关形态共用判据）
-  const untouched = !(threshold > 0) && quote?.enabled !== false
+  const untouched = !(threshold > 0) && entry?.quote !== false
   if (typeof config.quoteTrigger === 'boolean' && untouched) {
     return { enabled: config.quoteTrigger, minElapsedSeconds: 0 }
   }
-  return { enabled: quote?.mode === 'on' ? true : quote?.enabled !== false, minElapsedSeconds: threshold }
+  return { enabled: entry?.mode === 'on' ? true : entry?.quote !== false, minElapsedSeconds: threshold }
 }
 
 /** 冷却分支 → 内部设置；off 或形态缺失返回 null（关闭），max 小于 min 时取 min 兜底（schema 表不了交叉约束） */
