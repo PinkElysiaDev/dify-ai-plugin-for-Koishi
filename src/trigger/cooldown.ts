@@ -19,6 +19,9 @@ export type CooldownLane = 'message' | `density:${number}`
 /** 密度通道名的下标前缀 */
 export const DENSITY_LANE_PREFIX = 'density:'
 
+/** 通道键中规则名与通道名的分隔符（规则名可含冒号，故不用冒号） */
+const LANE_KEY_SEPARATOR = '\n'
+
 /** 密度条件的通道名 */
 export function densityLane(index: number): CooldownLane {
   return `${DENSITY_LANE_PREFIX}${index}`
@@ -43,7 +46,7 @@ export interface ExpiredCooldown {
 
 /** 内层 Map 的键：规则名 + 通道 */
 function laneKeyOf(ruleName: string, lane: CooldownLane): string {
-  return `${ruleName}\n${lane}`
+  return `${ruleName}${LANE_KEY_SEPARATOR}${lane}`
 }
 
 /**
@@ -87,24 +90,25 @@ export class TriggerCooldown {
     )
   }
 
-  /** 滑动窗口顺延：已到期的通道不复活 */
-  extend(channelKey: string, ruleName: string, lane: CooldownLane, now: number) {
-    const setting = this.setting
-    if (setting?.mode !== 'sliding') return
-    const state = this.channels.get(channelKey)?.get(laneKeyOf(ruleName, lane))
-    if (!state || now >= state.deadline) return
+  /** 滑动窗口顺延：sliding 模式且通道未到期才执行（已到期的不复活） */
+  private slideIfActive(state: LaneCooldown | undefined, setting: CooldownSetting | null, now: number) {
+    if (setting?.mode !== 'sliding' || !state || now >= state.deadline) return
     this.slide(state, setting, now)
   }
 
-  /** 该频道所有密度通道由一条过路消息顺延（密度冷却期内的消息积攒驱动窗口滑动）；已到期的不复活 */
+  /** 滑动窗口顺延 */
+  extend(channelKey: string, ruleName: string, lane: CooldownLane, now: number) {
+    const state = this.channels.get(channelKey)?.get(laneKeyOf(ruleName, lane))
+    this.slideIfActive(state, this.setting, now)
+  }
+
+  /** 该频道所有密度通道由一条过路消息顺延（密度冷却期内的消息积攒驱动窗口滑动） */
   extendDensityLanes(channelKey: string, now: number) {
-    const setting = this.setting
-    if (setting?.mode !== 'sliding') return
     const lanes = this.channels.get(channelKey)
     if (!lanes) return
     for (const [key, state] of lanes) {
-      if (!key.includes('\ndensity:') || now >= state.deadline) continue
-      this.slide(state, setting, now)
+      if (!key.includes(LANE_KEY_SEPARATOR + DENSITY_LANE_PREFIX)) continue
+      this.slideIfActive(state, this.setting, now)
     }
   }
 
@@ -126,7 +130,7 @@ export class TriggerCooldown {
       if (!lanes) continue
       for (const [laneKey, state] of lanes) {
         if (now < state.deadline) continue
-        const separator = laneKey.indexOf('\n')
+        const separator = laneKey.indexOf(LANE_KEY_SEPARATOR)
         lanes.delete(laneKey)
         expired.push({
           channelKey: key,
