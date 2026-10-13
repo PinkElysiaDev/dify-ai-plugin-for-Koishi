@@ -495,22 +495,35 @@ global                    → {appId}:global
 
 独立来源分支，大号字符框填一个 JSON 模板——**顶层键即 inputs 字段名**，一次配置承载多个输入字段（嵌套对象成为 Dify 的 object 变量值），规则如下：
 
-- **结构**：任意合法 JSON，顶层必须是对象（数组 / 标量条目在加载时丢弃）；与 Dify 输入端的 object 变量对齐。
-- **值**：number / boolean / null / array / object 静态原样注入；字符串值支持 `{{变量名}}` 插值。
-- **可用变量名**：与单条变量映射一一对应——12 个会话字段（userId、botId、guildId、channelId、platform、messageId、content、quoteContent、quoteAuthorId、username、timestamp、isDirect）+ 3 个元信息（triggerType、ruleName、triggerTime）+ `{{history}}`（全局条数的历史记录文本）与 `{{history:N}}`（指定 N 条）。
-- **占位符行为**：仅在字符串值内替换（占位符写在引号里）；未知变量或解析不到的值为空串；isDirect 得 "true" / "false"。
+- **结构**：顶层必须是对象（数组 / 标量条目在加载时丢弃，与 Dify 输入端对齐）；嵌套结构完全由用户自定义，插件不做任何语义约束。
+- **静态值**：number / boolean / null / array / object 原样注入。
+- **插值（类型保真）**：字符串值恰好是一个占位符（裸占位符，如 `"is_private": "{{isDirect}}"`）时替换为**原生 JSON 值**——`{{isDirect}}` 得布尔 `true` / `false`，字符串变量得原生字符串；占位符与其他文字混合（如 `"你好 {{username}}"`）时按字符串拼接，值中的引号 / 换行等会做转义，多行历史文本不会破坏结构。
+- **可用变量与类型**：
+
+| 占位符 | 类型 |
+|---|---|
+| `{{isDirect}}` | 布尔 |
+| `{{userId}}` `{{botId}}` `{{guildId}}` `{{channelId}}` `{{platform}}` `{{messageId}}` `{{content}}` `{{quoteContent}}` `{{quoteAuthorId}}` `{{username}}` `{{timestamp}}` | 字符串 |
+| `{{triggerType}}` `{{ruleName}}` `{{triggerTime}}` | 字符串 |
+| `{{history}}` / `{{history:N}}` | 字符串（统一消息格式逐行文本，N 覆盖全局条数） |
+
+未知变量名替换为空串（裸占位符场景得空字符串值）。
 - **注入顺序**：JSON 条目先注入，单条映射后注入覆盖同名键——现有单条配置行为不变，JSON 作为批量默认值。
 - **失败路径**：加载时结构校验（占位符替换占位文本后解析，非法或顶层非对象丢弃条目）；运行时插值后解析失败该条目整体跳过。
 
-示例（一次配置顶五条单条映射）：
+示例（一组单条映射的等价 JSON）：
 
 ```json
 {
-  "persona": "你是 {{username}} 的群聊助手",
-  "level": 3,
-  "tags": ["静态", "数组"],
-  "user": { "id": "{{userId}}", "private": "{{isDirect}}", "scene": "{{triggerType}}" },
-  "chat": "{{history:20}}"
+  "bot_id": "{{botId}}",
+  "user_id": "{{userId}}",
+  "group_id": "{{guildId}}",
+  "user_name": "{{username}}",
+  "is_private": "{{isDirect}}",
+  "history": "{{history:12}}",
+  "trigger_reason": "{{triggerType}}",
+  "quoted_message": "{{quoteContent}}",
+  "user_query": "{{content}}"
 }
 ```
 
