@@ -61,35 +61,23 @@ export interface RuleEntry {
   variables: VariableEntry[]
 }
 
-/** 引用触发消息的布尔开关形态（开关字段名即配置项名 quote）；mode 为 0.1.7 形态透传（仅迁移读取） */
-export type QuoteEntry =
-  | { quote: boolean; minElapsedSeconds?: number }
-  | { mode: 'off' }
-  | { mode: 'on'; minElapsedSeconds?: number }
-
 /** 触发后冷却的条件分支形态 */
 export type CooldownEntry =
   | { mode: 'off' }
   | { mode: 'fixed'; seconds?: number }
   | { mode: 'sliding'; minSeconds?: number; maxSeconds?: number }
 
-/** 上传消息文件的布尔开关形态；mode 为旧形态透传（仅迁移读取） */
-export type UploadEntry =
-  | { enabled: boolean; maxCount?: number; maxSizeMb?: number }
-  | { mode: 'off' }
-  | { mode: 'on'; maxCount?: number; maxSizeMb?: number }
-
 export interface Config {
   apps: AppConfigEntry[]
   rules: RuleEntry[]
-  // 回复行为
+  // 回复行为（开关与条件字段顶层平铺，条件字段在开关开启时由顶层条件 union 展示）
   parseElements: boolean
-  quote: QuoteEntry
+  quote: boolean
+  minElapsedSeconds: number
   maxSegmentLength: number
-  /** boolean 是 0.1.x 的遗留形态，仅迁移读取（true → 开启不限，false → 关闭） */
-  uploadFiles: UploadEntry | boolean
-  /** 0.1.x 的布尔开关，仅用于迁移读取（true → 总是引用，false → 关闭） */
-  quoteTrigger?: boolean
+  uploadFiles: boolean
+  maxCount: number
+  maxSizeMb: number
   // 运行参数
   requestTimeout: number
   historyLimit: number
@@ -204,21 +192,28 @@ const variableSchema = Schema.union([
 ])
 
 /**
- * 引用触发消息：布尔开关驱动分支（开=可配耗时阈值，关=空分支），官方 union-tagged 写法。
+ * 引用触发的条件分支（顶层 union，官方 union-tagged 位置）：开关开启时展示耗时阈值。
  * 阈值默认 -1：规避「值等于默认值被置 null」的表单机制吞掉 0（-1 与 0 同为总是引用）。
- * 旧 mode 形态经解析后 mode 键透传保留，由 resolveQuoteConfig 迁移。
  */
-const quoteSchema = Schema.intersect([
+const quoteBranchSchema = Schema.union([
   Schema.object({
-    quote: Schema.boolean().default(true)
+    quote: Schema.const(true).required(),
+    minElapsedSeconds: Schema.number().min(-1).default(-1).description('回复耗时多少秒才引用，0 总是引用')
   }),
-  Schema.union([
-    Schema.object({
-      quote: Schema.const(true).required(),
-      minElapsedSeconds: Schema.number().min(-1).default(-1).description('回复耗时多少秒才引用，0 总是引用')
-    }),
-    Schema.object({})
-  ])
+  Schema.object({})
+])
+
+/**
+ * 上传消息文件的条件分支（顶层 union）：开关开启时展示数量与单文件大小上限。
+ * 上限默认 -1 规避 0 被表单默认值机制吞掉（-1 与 0 同为不限，仍受 Dify 各类型上限约束）。
+ */
+const uploadBranchSchema = Schema.union([
+  Schema.object({
+    uploadFiles: Schema.const(true).required(),
+    maxCount: Schema.number().min(-1).default(-1).description('数量上限，0 不限'),
+    maxSizeMb: Schema.number().min(-1).default(-1).description('单文件大小上限 MB，0 不限')
+  }),
+  Schema.object({})
 ])
 
 /**
@@ -245,20 +240,6 @@ const cooldownSchema = Schema.union([
  * 上传消息文件：布尔开关驱动分支（开=可配数量与单文件大小上限，关=空分支），官方 union-tagged 写法。
  * 上限默认 -1 规避 0 被表单默认值机制吞掉（-1 与 0 同为不限，仍受 Dify 各类型上限约束）。
  */
-const uploadSchema = Schema.intersect([
-  Schema.object({
-    enabled: Schema.boolean().default(true)
-  }),
-  Schema.union([
-    Schema.object({
-      enabled: Schema.const(true).required(),
-      maxCount: Schema.number().min(-1).default(-1).description('数量上限，0 不限'),
-      maxSizeMb: Schema.number().min(-1).default(-1).description('单文件大小上限 MB，0 不限')
-    }),
-    Schema.object({})
-  ])
-])
-
 export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     apps: Schema.array(
@@ -326,10 +307,14 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     parseElements: Schema.boolean().default(false).description('解析回复中的消息元素'),
-    quote: quoteSchema.description('引用触发消息'),
+    quote: Schema.boolean().default(true).description('引用触发消息'),
     maxSegmentLength: Schema.number().min(-1).default(-1).description('分段长度，0 不分段'),
-    uploadFiles: uploadSchema.description('上传消息中的文件')
+    uploadFiles: Schema.boolean().default(true).description('上传消息中的文件')
   }).description('回复行为'),
+
+  // 开关开启时展示对应条件字段（官方 union-tagged 顶层位置）
+  quoteBranchSchema,
+  uploadBranchSchema,
 
   Schema.object({
     requestTimeout: Schema.natural().role('ms').default(300000).description('请求超时'),
@@ -467,36 +452,30 @@ function toVariable(entry: VariableEntry): VariableBinding | null {
 }
 
 /**
- * 上传消息文件配置（含 0.1.7 mode 形态透传迁移）。
- * 数量与单文件大小 0 与 -1 均为不限，大小仍与 Dify 各类型上限取较小值。
+ * 上传消息文件配置（平铺开关）。数量与单文件大小 0 与 -1 均为不限，
+ * 大小仍与 Dify 各类型上限取较小值。
  */
 export function resolveUploadConfig(config: Config): { enabled: boolean; maxCount: number; maxMb: number } {
-  const upload: any = config.uploadFiles
-  if (upload?.mode === 'off' || upload?.enabled === false) {
-    return { enabled: false, maxCount: 0, maxMb: 0 }
-  }
+  if (config.uploadFiles === false) return { enabled: false, maxCount: 0, maxMb: 0 }
   return {
     enabled: true,
-    maxCount: Number(upload?.maxCount) || 0,
-    maxMb: Number(upload?.maxSizeMb) || 0
+    maxCount: Number(config.maxCount) || 0,
+    maxMb: Number(config.maxSizeMb) || 0
   }
 }
 
 /**
- * 引用触发消息配置（含 0.1.x quoteTrigger 透传与 0.1.7 mode 形态迁移）。
- * 迁移判据沿用：旧布尔被透传保留且配置未被用户改动（默认形态）时以旧布尔为准。
- * 阈值 -1 与 0 同为总是引用（比较 elapsed >= 阈值 自然兼容）。
+ * 引用触发消息配置（平铺开关，含 0.1.x quoteTrigger 透传迁移：
+ * 旧布尔被保留且开关与阈值均未被改动时以旧布尔为准）。阈值 -1 与 0 同为总是引用。
  */
 export function resolveQuoteConfig(config: Config): { enabled: boolean; minElapsedSeconds: number } {
-  const entry: any = config.quote
-  if (entry?.mode === 'off') return { enabled: false, minElapsedSeconds: 0 }
-  const threshold = Number(entry?.minElapsedSeconds) || 0
-  // quoteTrigger 透传且阈值未被改动（默认形态）时以旧布尔为准（mode 形态与开关形态共用判据）
-  const untouched = !(threshold > 0) && entry?.quote !== false
-  if (typeof config.quoteTrigger === 'boolean' && untouched) {
-    return { enabled: config.quoteTrigger, minElapsedSeconds: 0 }
+  const threshold = Number(config.minElapsedSeconds) || 0
+  const untouched = config.quote !== false && !(threshold > 0)
+  const legacy = (config as any).quoteTrigger
+  if (typeof legacy === 'boolean' && untouched) {
+    return { enabled: legacy, minElapsedSeconds: 0 }
   }
-  return { enabled: entry?.mode === 'on' ? true : entry?.quote !== false, minElapsedSeconds: threshold }
+  return { enabled: config.quote !== false, minElapsedSeconds: threshold }
 }
 
 /** 冷却分支 → 内部设置；off 或形态缺失返回 null（关闭），max 小于 min 时取 min 兜底（schema 表不了交叉约束） */
