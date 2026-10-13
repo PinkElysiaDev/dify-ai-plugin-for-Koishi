@@ -83,7 +83,9 @@ export class ConversationStore {
     await this.ctx.database.upsert('dify_conversation', [{ bindingKey, difyConversationId }])
   }
 
-  /** 解析 bindingKey 的构成（重置时反查应用凭据与 difyUser 用） */
+  /** 解析 bindingKey 的构成（重置时反查应用凭据与 difyUser 用）。
+   *  段位定位假设 appId / platform / selfId 不含冒号（平台名与应用标识按约定不含；
+   *  Matrix 的 bot id 含冒号属键格式改造范畴，当前不区分） */
   private parseBindingKey(bindingKey: string): {
     /** 首段是应用 ID（配置留空时即应用名） */
     appId: string
@@ -101,18 +103,24 @@ export class ConversationStore {
     return { appId, platform, scope, ids }
   }
 
+  /** scope 之后的 id 片段拼回整体（键内 id 可能内嵌冒号，消费方按语义整体比较） */
+  private joinedIdsOf(bindingKey: string): string {
+    return this.parseBindingKey(bindingKey).ids.join(':')
+  }
+
   /** 由 bindingKey 还原删除 Dify 会话所需的 difyUser（与 computeDifyUser 对齐） */
   private difyUserOfBindingKey(bindingKey: string): string {
-    const { platform, scope, ids } = this.parseBindingKey(bindingKey)
+    const { platform, scope } = this.parseBindingKey(bindingKey)
+    const ids = this.joinedIdsOf(bindingKey)
     switch (scope) {
       case 'global':
         return 'koishi'
       case 'private':
-        return `koishi:${platform}:private:${ids.join(':')}`
+        return `koishi:${platform}:private:${ids}`
       case 'guild':
       case 'channel':
       case 'user':
-        return `koishi:${platform}:${ids.join(':')}`
+        return `koishi:${platform}:${ids}`
       default:
         return `koishi:${platform}`
     }
@@ -141,12 +149,15 @@ export class ConversationStore {
     const [channelPlatform, channelId] = splitKey(filter.channelKey ?? '')
     const matched = rows.filter((row) => {
       if (filter.bindingKey) return row.bindingKey === filter.bindingKey
-      const { platform, scope, ids } = this.parseBindingKey(row.bindingKey)
+      const { platform, scope } = this.parseBindingKey(row.bindingKey)
       if (platform !== guildPlatform) return false
-      if (scope === 'guild') return ids[0] === guildId
-      if (scope === 'user') return ids.length === 2 ? ids[0] === guildId : false
-      if (scope === 'channel') return platform === channelPlatform && ids[0] === channelId
-      if (scope === 'private') return filter.isDirect === true && ids[0] === filter.userId
+      // id 片段拼回整体比较（内嵌冒号的平台 id 如 @user:server 安全）
+      const joinedIds = this.joinedIdsOf(row.bindingKey)
+      if (scope === 'guild') return joinedIds === guildId
+      // user 段按群整群重置：guildId 是 ids 前缀（userId 含冒号多段时逐段比会漏）
+      if (scope === 'user') return joinedIds.startsWith(`${guildId}:`)
+      if (scope === 'channel') return platform === channelPlatform && joinedIds === channelId
+      if (scope === 'private') return filter.isDirect === true && joinedIds === filter.userId
       // global 段跨频道，不随单频道重置
       return false
     })
