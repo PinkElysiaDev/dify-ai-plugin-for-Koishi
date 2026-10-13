@@ -19,6 +19,7 @@ export { Config }
 const PROBE_TIMEOUT_MS = 10_000
 
 export function apply(ctx: Context, config: Config) {
+  const startedAt = Date.now()
   ctx.i18n.define('zh-CN', zhCN)
   ctx.i18n.define('en-US', enUS)
 
@@ -38,7 +39,11 @@ export function apply(ctx: Context, config: Config) {
     // 先注册触发再后台探测：探测是网络请求（自建/代理下可达数秒），
     // 阻塞 start 会让重载窗口内消息触发完全失灵；探测完成前的请求按 chat 路径回退
     engine.start()
-    void probeAppTypes(ctx, apps, appTypes)
+    ctx.logger.info('插件装配完成，耗时 %dms', Date.now() - startedAt)
+    const probeStart = Date.now()
+    void probeAppTypes(ctx, apps, appTypes).then(() => {
+      ctx.logger.info('应用类型探测完成，耗时 %dms', Date.now() - probeStart)
+    })
   })
 
   const admin = ctx.command('dify', { authority: 3 })

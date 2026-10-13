@@ -103,6 +103,10 @@ export type VariableSource =
   | { type: 'history'; limit?: number }
   | { type: 'meta'; key: MetaField }
   | { type: 'constant'; value: string }
+  | { type: 'json'; template: string }
+
+/** JSON 对象模板里的占位符：{{变量名}} 或 {{history:条数}}（加载校验与运行时插值共用） */
+export const JSON_PLACEHOLDER = /\{\{\s*(\w+)(?::(\d+))?\s*\}\}/g
 
 /** 一条变量映射：Dify inputs 字段名 ← 来源 */
 export interface VariableBinding {

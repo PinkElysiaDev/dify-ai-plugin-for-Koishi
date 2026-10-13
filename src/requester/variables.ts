@@ -1,4 +1,4 @@
-import { FireContext, MetaField, SessionField, VariableSource } from '../types'
+import { FireContext, JSON_PLACEHOLDER, MetaField, SessionField, VariableSource } from '../types'
 import { MessageHistory } from '../history'
 import { DifyRule } from '../types'
 import { parseTextSafe } from '../utils/session-text'
@@ -74,7 +74,51 @@ function resolveSource(
   }
 }
 
-/** 按规则的变量映射表构造 Dify inputs */
+/** 占位符可引用的元信息变量（其余名字走会话字段） */
+const META_PLACEHOLDERS = new Set<MetaField>(['triggerType', 'ruleName', 'triggerTime'])
+
+/** 占位符求值：与现有变量系统一一对应（12 会话字段 + 3 元信息 + history[:N]），未知或无值得空串 */
+function resolvePlaceholder(
+  name: string,
+  limit: number | undefined,
+  fireCtx: FireContext,
+  history: MessageHistory,
+  now: string
+): string {
+  if (name === 'history') {
+    const channelKey = channelKeyOf(fireCtx.platform, fireCtx.channelId)
+    return history.toVariable(history.get(channelKey, limit ?? history.limit))
+  }
+  if (META_PLACEHOLDERS.has(name as MetaField)) {
+    return String(resolveMetaField(name as MetaField, fireCtx, now) ?? '')
+  }
+  const value = resolveSessionField(name as SessionField, fireCtx, now)
+  return value === undefined || value === null ? '' : String(value)
+}
+
+/** JSON 对象模板插值并解析：顶层键即 inputs 字段，嵌套对象即 object 变量值；失败返回 null（条目整体跳过） */
+function resolveJsonObject(
+  template: string,
+  fireCtx: FireContext,
+  history: MessageHistory,
+  now: string
+): Record<string, any> | null {
+  const interpolated = template.replace(JSON_PLACEHOLDER, (_match, name: string, limit?: string) =>
+    resolvePlaceholder(name, limit ? Number(limit) : undefined, fireCtx, history, now)
+  )
+  try {
+    const parsed = JSON.parse(interpolated)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 按规则的变量映射表构造 Dify inputs。
+ * JSON 对象条目先注入（顶层键展开合并进 inputs），单条映射后注入覆盖同名键——
+ * 现有单条配置行为不变，JSON 作为批量默认值。
+ */
 export function resolveVariables(
   rule: DifyRule,
   fireCtx: FireContext,
@@ -83,7 +127,12 @@ export function resolveVariables(
   const inputs: Record<string, any> = {}
   const now = new Date().toISOString()
   for (const binding of rule.variables) {
-    if (!binding?.field) continue
+    if (binding?.source?.type !== 'json') continue
+    const object = resolveJsonObject(binding.source.template, fireCtx, history, now)
+    if (object) Object.assign(inputs, object)
+  }
+  for (const binding of rule.variables) {
+    if (!binding?.field || binding.source?.type === 'json') continue
     const value = resolveSource(binding.source, fireCtx, history, now)
     if (value !== undefined) inputs[binding.field] = value
   }
