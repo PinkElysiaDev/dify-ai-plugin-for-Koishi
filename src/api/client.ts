@@ -73,10 +73,6 @@ export class DifyClient {
     return this.request<DifyAppInfo>('GET', '/info')
   }
 
-  getParameters(): Promise<any> {
-    return this.request('GET', '/parameters')
-  }
-
   /** chat / agent-chat / advanced-chat（conversation_id 传空串表示新建会话） */
   runChat(body: {
     inputs: Record<string, any>

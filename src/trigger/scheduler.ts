@@ -23,14 +23,10 @@ export class RuleScheduler {
   ) {}
 
   sync(rules: DifyRule[]) {
-    // 保留未变规则的既有 nextRunAt，仅对新规则计算
-    const previous = new Map(this.entries.map((entry) => [entry.rule.name, entry.nextRunAt]))
-    const nextEntries: ScheduleEntry[] = []
-    for (const rule of rules) {
-      const nextRunAt = previous.get(rule.name) ?? this.computeNextRun(rule)
-      if (nextRunAt != null) nextEntries.push({ rule, nextRunAt })
-    }
-    this.entries = nextEntries
+    // 插件整体重载模型下 sync 只在启动时调用一次，直接全量计算
+    this.entries = rules
+      .map((rule) => ({ rule, nextRunAt: this.computeNextRun(rule) }))
+      .filter((entry): entry is ScheduleEntry => entry.nextRunAt != null)
   }
 
   tick() {
