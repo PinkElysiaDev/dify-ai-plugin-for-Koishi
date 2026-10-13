@@ -5,6 +5,7 @@ import { DifyFilePayload } from '../api/types'
 export interface RenderInput {
   text: string
   files: DifyFilePayload[]
+  /** 引用哪条消息；调用方完成开关与耗时判定，未达标传空即不引用 */
   quoteMessageId?: string
   /** 回复行为配置（koishi schema「回复行为」组） */
   config: Config
@@ -45,10 +46,10 @@ function splitText(text: string, maxLength: number): string[] {
  */
 export function renderReply(input: RenderInput): h[][] {
   const messages: h[][] = []
-  const segments = splitText(input.text, input.config.maxSegmentLength ?? 0)
+  const segments = splitText(input.text, input.config.maxSegmentLength)
   segments.forEach((segment, index) => {
     const elements: h[] = []
-    if (index === 0 && input.config.quoteTrigger && input.quoteMessageId) {
+    if (index === 0 && input.quoteMessageId) {
       elements.push(h.quote(input.quoteMessageId))
     }
     if (input.config.parseElements) {

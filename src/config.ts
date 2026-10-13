@@ -1,5 +1,6 @@
 import { Schema } from 'koishi'
 import {
+  CooldownSetting,
   ConversationScope,
   DifyRule,
   MetaField,
@@ -38,6 +39,7 @@ export type VariableEntry =
   | { source: 'session'; field: string; key: string }
   | { source: 'history'; field: string; limit?: number }
   | { source: 'meta'; field: string; key: string }
+  | { source: 'constant'; field: string; value: string }
 
 /** 作用域的一行：维度 + 值 */
 export interface ScopeRow {
@@ -56,18 +58,38 @@ export interface RuleEntry {
   variables: VariableEntry[]
 }
 
+/** 引用触发消息的条件分支形态：关闭时空分支，开启时按耗时阈值决定是否引用 */
+export type QuoteEntry =
+  | { mode: 'off' }
+  | { mode: 'on'; minElapsedSeconds: number }
+
+/** 触发后冷却的条件分支形态 */
+export type CooldownEntry =
+  | { mode: 'off' }
+  | { mode: 'fixed'; seconds?: number }
+  | { mode: 'sliding'; minSeconds?: number; maxSeconds?: number }
+
+/** 上传消息文件的条件分支形态：关闭时空分支，开启时限制数量与单文件大小 */
+export type UploadEntry =
+  | { mode: 'off' }
+  | { mode: 'on'; maxCount?: number; maxSizeMb?: number }
+
 export interface Config {
   apps: AppConfigEntry[]
   rules: RuleEntry[]
   // 回复行为
   parseElements: boolean
-  quoteTrigger: boolean
+  quote: QuoteEntry
   maxSegmentLength: number
-  uploadFiles: boolean
+  /** boolean 是 0.1.x 的遗留形态，仅迁移读取（true → 开启不限，false → 关闭） */
+  uploadFiles: UploadEntry | boolean
+  /** 0.1.x 的布尔开关，仅用于迁移读取（true → 总是引用，false → 关闭） */
+  quoteTrigger?: boolean
   // 运行参数
   requestTimeout: number
   historyLimit: number
   sendErrors: boolean
+  cooldown: CooldownEntry
 }
 
 const appTypeSchema = Schema.union([
@@ -164,7 +186,60 @@ const variableSchema = Schema.union([
     source: Schema.const('meta').required(),
     field: Schema.string().required().description('字段名'),
     key: metaKeySchema.default('none').description('变量')
-  }).default({ source: 'meta', field: '', key: 'none' }).description('触发元信息')
+  }).default({ source: 'meta', field: '', key: 'none' }).description('触发元信息'),
+  Schema.object({
+    source: Schema.const('constant').required(),
+    field: Schema.string().required().description('字段名'),
+    value: Schema.string().role('textarea').required().description('固定文本')
+  }).default({ source: 'constant', field: '', value: '' }).description('常量文本')
+])
+
+/** 引用触发消息分支：开启后回复耗时达到阈值才引用（0 总是引用），定时与密度触发不引用 */
+const quoteSchema = Schema.union([
+  Schema.object({
+    mode: Schema.const('off').required()
+  }).default({ mode: 'off' }).description('关闭'),
+  Schema.object({
+    mode: Schema.const('on').required(),
+    minElapsedSeconds: Schema.natural().default(0).description('回复耗时多少秒才引用，0 总是引用')
+  }).default({ mode: 'on', minElapsedSeconds: 0 }).description('开启')
+])
+
+/**
+ * 触发后冷却分支：全局一份，作用于所有规则。
+ * 关键词/@/引用类条件在规则内共享冷却并合并触发消息；
+ * 密度条件独立冷却（冷却期即积攒期，到期复查达标才触发）；定时不受冷却影响。
+ */
+const cooldownSchema = Schema.union([
+  Schema.object({
+    mode: Schema.const('off').required()
+  }).default({ mode: 'off' }).description('关闭'),
+  Schema.object({
+    mode: Schema.const('fixed').required(),
+    seconds: Schema.natural().default(30).min(1).description('冷却秒数')
+  }).default({ mode: 'fixed', seconds: 30 }).description('固定窗口'),
+  Schema.object({
+    mode: Schema.const('sliding').required(),
+    minSeconds: Schema.natural().default(30).min(1).description('最小冷却秒数'),
+    maxSeconds: Schema.natural().default(120).min(1).description('最大冷却秒数')
+  }).default({ mode: 'sliding', minSeconds: 30, maxSeconds: 120 }).description('滑动窗口')
+])
+
+/**
+ * 上传消息文件分支：开启时可限制数量与单文件大小，0 均为不限（仍受 Dify 各类型上限约束）。
+ * boolean 兼容分支只为放行 0.1.x 的旧布尔值通过 schema 校验（否则加载即抛错），
+ * 由 resolveUploadConfig 迁移；表单里请勿选择。
+ */
+const uploadSchema = Schema.union([
+  Schema.object({
+    mode: Schema.const('off').required()
+  }).default({ mode: 'off' }).description('关闭'),
+  Schema.object({
+    mode: Schema.const('on').required(),
+    maxCount: Schema.natural().default(0).description('数量上限，0 不限'),
+    maxSizeMb: Schema.natural().default(0).description('单文件大小上限 MB，0 不限')
+  }).default({ mode: 'on', maxCount: 0, maxSizeMb: 0 }).description('开启'),
+  Schema.boolean().description('旧版开关')
 ])
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -234,15 +309,16 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     parseElements: Schema.boolean().default(false).description('解析回复中的消息元素'),
-    quoteTrigger: Schema.boolean().default(true).description('引用触发消息'),
+    quote: quoteSchema.default({ mode: 'on', minElapsedSeconds: 0 }).description('引用触发消息'),
     maxSegmentLength: Schema.natural().default(0).description('分段长度，0 不分段'),
-    uploadFiles: Schema.boolean().default(true).description('上传消息中的文件')
+    uploadFiles: uploadSchema.default({ mode: 'on', maxCount: 0, maxSizeMb: 0 }).description('上传消息中的文件')
   }).description('回复行为'),
 
   Schema.object({
     requestTimeout: Schema.natural().role('ms').default(300000).description('请求超时'),
     historyLimit: Schema.natural().default(20).min(1).description('历史消息条数'),
-    sendErrors: Schema.boolean().default(false).description('失败时提示错误')
+    sendErrors: Schema.boolean().default(false).description('失败时提示错误'),
+    cooldown: cooldownSchema.default({ mode: 'off' }).description('触发后冷却')
   }).description('运行参数')
 ]) as Schema<Config>
 
@@ -342,10 +418,15 @@ function toScope(rows: ScopeRow[]): TriggerScope {
 function toVariable(entry: VariableEntry): VariableBinding | null {
   const field = entry.field?.trim()
   if (!field) return null
+  if (entry.source === 'constant') {
+    // 空文本无意义，条目不生效；非空值原样保留（不 trim，保留多行原貌）
+    if (!entry.value) return null
+    return { field, source: { type: 'constant', value: entry.value } }
+  }
   if (entry.source === 'meta') {
     // 哨兵「无」表示尚未选择变量，条目不生效
     if (entry.key === 'none') return null
-    return { field, source: { type: 'meta', key: (entry.key || 'triggerType') as MetaField } }
+    return { field, source: { type: 'meta', key: entry.key as MetaField } }
   }
   if (entry.source === 'history') {
     const limit = Number(entry.limit)
@@ -353,22 +434,76 @@ function toVariable(entry: VariableEntry): VariableBinding | null {
   }
   // 「无」未选择；历史消息塞在会话字段下拉里的旧形态（≤0.1.2 与 intersect 试验期）不做兼容
   if (entry.key === 'none' || entry.key === 'history') return null
-  return { field, source: { type: 'session', key: (entry.key || 'content') as SessionField } }
+  return { field, source: { type: 'session', key: entry.key as SessionField } }
 }
 
 /**
- * 配置规范化：应用表 + 按优先级降序的规则列表。
+ * 上传消息文件配置（含 0.1.x 布尔遗留形态迁移）：
+ * 数量与单文件大小 0 均为不限，大小仍与 Dify 各类型上限取较小值。
+ */
+export function resolveUploadConfig(config: Config): { enabled: boolean; maxCount: number; maxMb: number } {
+  if (typeof config.uploadFiles === 'boolean') {
+    return config.uploadFiles
+      ? { enabled: true, maxCount: 0, maxMb: 0 }
+      : { enabled: false, maxCount: 0, maxMb: 0 }
+  }
+  if (config.uploadFiles?.mode === 'off') return { enabled: false, maxCount: 0, maxMb: 0 }
+  return {
+    enabled: true,
+    maxCount: Number(config.uploadFiles?.maxCount) || 0,
+    maxMb: Number(config.uploadFiles?.maxSizeMb) || 0
+  }
+}
+
+/**
+ * 引用触发消息配置（含 0.1.x 布尔开关迁移）：schema 会给旧配置填默认 quote 对象，
+ * 因此迁移判据是「旧布尔被配置层透传保留 且 quote 仍是默认形态（用户未在新表单改过）」——
+ * 此时以旧布尔为准；用户改过新表单（quote 非默认）则新值优先。
+ */
+export function resolveQuoteConfig(config: Config): { enabled: boolean; minElapsedSeconds: number } {
+  const quote = config.quote
+  const isDefaultQuote =
+    !quote || (quote.mode === 'on' && !(Number(quote.minElapsedSeconds) > 0))
+  if (typeof config.quoteTrigger === 'boolean' && isDefaultQuote) {
+    return { enabled: config.quoteTrigger, minElapsedSeconds: 0 }
+  }
+  if (quote?.mode === 'off') return { enabled: false, minElapsedSeconds: 0 }
+  return { enabled: true, minElapsedSeconds: Number(quote?.minElapsedSeconds) || 0 }
+}
+
+/** 冷却分支 → 内部设置；off 或形态缺失返回 null（关闭），max 小于 min 时取 min 兜底（schema 表不了交叉约束） */
+function toCooldown(entry: CooldownEntry | undefined): CooldownSetting | null {
+  if (entry?.mode === 'fixed') {
+    return { mode: 'fixed', ms: Number(entry.seconds) * 1000 }
+  }
+  if (entry?.mode === 'sliding') {
+    const minSeconds = Number(entry.minSeconds)
+    const maxSeconds = Number(entry.maxSeconds)
+    return { mode: 'sliding', minMs: minSeconds * 1000, maxMs: Math.max(minSeconds, maxSeconds) * 1000 }
+  }
+  return null
+}
+
+/**
+ * 配置规范化：应用表 + 按优先级降序的规则列表 + 冷却设置。
  * 坏条件/无名变量直接丢弃；引用不存在应用的规则保留但运行时会 warn 跳过。
  */
-export function normalizeConfig(config: Config): { apps: Map<string, AppConfigEntry>; rules: DifyRule[] } {
+export function normalizeConfig(
+  config: Config
+): { apps: Map<string, AppConfigEntry>; rules: DifyRule[]; cooldown: CooldownSetting | null } {
   const apps = new Map<string, AppConfigEntry>()
   for (const app of config.apps ?? []) {
     if (app.name?.trim() && !apps.has(app.name)) apps.set(app.name, app)
   }
 
   const rules: DifyRule[] = []
+  const seenNames = new Set<string>()
   for (const entry of config.rules ?? []) {
     if (!entry.name?.trim() || entry.enabled === false) continue
+    // 重名规则会让冷却通道与到期回调错位到另一条规则，保首条弃其余
+    const name = entry.name.trim()
+    if (seenNames.has(name)) continue
+    seenNames.add(name)
     // 条目可能为 null：表单缺陷时期保存的脏数据形态，跳过即可
     const conditions = (entry.conditions ?? [])
       .filter((condition): condition is ConditionEntry => condition != null)
@@ -379,7 +514,7 @@ export function normalizeConfig(config: Config): { apps: Map<string, AppConfigEn
       .map(toVariable)
       .filter((variable): variable is VariableBinding => variable != null)
     rules.push({
-      name: entry.name.trim(),
+      name,
       enabled: true,
       priority: Number(entry.priority) || 0,
       app: entry.app?.trim() ?? '',
@@ -392,5 +527,5 @@ export function normalizeConfig(config: Config): { apps: Map<string, AppConfigEn
     })
   }
   rules.sort((a, b) => b.priority - a.priority)
-  return { apps, rules }
+  return { apps, rules, cooldown: toCooldown(config.cooldown) }
 }

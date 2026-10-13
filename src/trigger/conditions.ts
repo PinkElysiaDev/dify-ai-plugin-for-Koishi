@@ -1,56 +1,75 @@
 import { Session } from 'koishi'
 import { MessageTriggerType, TriggerCondition, TriggerScope } from '../types'
-import { extractText } from '../utils/session-text'
+import { extractText, extractTextWithPlaceholders, IMAGE_HASH_LENGTH } from '../utils/session-text'
 
 export interface ConditionMatched {
   type: MessageTriggerType
-  /** 触发后用作 content 变量的剥离文本（query 由引擎按统一消息格式另行构造） */
-  queryText: string
+  /** content 变量的剥离文本，保留 @ 与图片占位（query 由引擎按统一消息格式另行构造） */
+  contentText: string
 }
 
 function hasAt(session: Session, id: string): boolean {
   return session.elements?.some((element) => element.type === 'at' && element.attrs?.['id'] === id) ?? false
 }
 
-/** 评估单个消息条件；返回 null 表示未命中 */
+/** 原貌开头的非正文前缀（@渲染 / 图片占位 / 空白）序列；占位符摘要长度与 imagePlaceholder 同源 */
+const NON_TEXT_PREFIX = new RegExp(`^(?:@\\S+|\\[image:[0-9a-f]{${IMAGE_HASH_LENGTH}}\\]|\\[图片\\]|\\s)*`)
+
+/**
+ * 前缀感知剥离：原貌以「非正文前缀 + 关键词」开头时剥掉关键词并保留前缀
+ * （如 `[image:x] 查这张` → `[image:x] 这张`）；不匹配返回 null。
+ */
+function stripPrefixKeyword(verbatim: string, keyword: string): string | null {
+  const prefix = NON_TEXT_PREFIX.exec(verbatim)?.[0] ?? ''
+  const rest = verbatim.slice(prefix.length)
+  if (!rest.startsWith(keyword)) return null
+  return (prefix + rest.slice(keyword.length)).trim()
+}
+
+/** 评估单个消息条件；返回 null 表示未命中（匹配基于纯文本，@ 元素不参与判定） */
 export function evaluateCondition(
   condition: TriggerCondition,
   session: Session
 ): ConditionMatched | null {
   const text = extractText(session)
+  // content 变量通道剔除 @bot（触发结构非消息内容）；query 通道的统一格式行仍保留
+  const verbatim = extractTextWithPlaceholders(session, { excludeBotAt: true })
   switch (condition.type) {
     case 'keyword-prefix': {
       const keyword = condition.keywords.find((k) => k && text.startsWith(k))
       if (!keyword) return null
-      const rest = text.slice(keyword.length).trim()
-      return { type: 'keyword-prefix', queryText: rest || text }
+      // 原貌域剥离优先（含前缀感知），保住 @ 与图片占位；均不匹配才退回纯文本剥离
+      const rest = verbatim.startsWith(keyword)
+        ? verbatim.slice(keyword.length).trim()
+        : stripPrefixKeyword(verbatim, keyword) ?? text.slice(keyword.length).trim()
+      return { type: 'keyword-prefix', contentText: rest || verbatim }
     }
     case 'keyword-contains': {
       const keyword = condition.keywords.find((k) => k && text.includes(k))
       if (!keyword) return null
-      return { type: 'keyword-contains', queryText: text }
+      return { type: 'keyword-contains', contentText: verbatim }
     }
     case 'at-bot': {
       const botId = session.bot?.userId
       if (!botId) return null
       // 首选 koishi 内置的 atSelf（含「@ 在句首」语义），元素级判定兜底（@ 在任意位置）
       if (!session.stripped?.atSelf && !hasAt(session, botId)) return null
-      return { type: 'at-bot', queryText: extractText(session, { excludeAt: true }) }
+      return { type: 'at-bot', contentText: verbatim }
     }
     case 'at-user': {
       const isAtAnyUser = condition.userIds.some((id) => hasAt(session, id))
       if (!isAtAnyUser) return null
-      return { type: 'at-user', queryText: text }
+      return { type: 'at-user', contentText: verbatim }
     }
     case 'quote-bot': {
       const botId = session.bot?.userId
       if (!botId || session.quote?.user?.id !== botId) return null
-      return { type: 'quote-bot', queryText: extractText(session, { excludeAt: true }) }
+      return { type: 'quote-bot', contentText: verbatim }
     }
     case 'quote-user': {
       const author = session.quote?.user?.id
       if (!author || !condition.userIds.includes(author)) return null
-      return { type: 'quote-user', queryText: extractText(session, { excludeAt: true }) }
+      return { type: 'quote-user', contentText: verbatim }
     }
     default:
       // schedule / density 不是消息条件，由调度器与消息池处理

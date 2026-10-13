@@ -112,11 +112,28 @@ export function extractFileCandidates(session: Session): FileCandidate[] {
   return candidates
 }
 
+/** percent 解码到字节流（decodeURIComponent 走 UTF-16 会破坏非 ASCII 的原始字节） */
+function percentDecodeBytes(input: string): Buffer {
+  const bytes: number[] = []
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i]
+    if (char === '%' && /^[0-9a-fA-F]{2}$/.test(input.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(input.slice(i + 1, i + 3), 16))
+      i += 2
+    } else {
+      bytes.push(char.charCodeAt(0) & 0xff)
+    }
+  }
+  return Buffer.from(bytes)
+}
+
+/** data URL 解析：base64 与 URL 编码两种形态 */
 function parseDataUrl(source: string): FilePayload | null {
-  const match = source.match(/^data:([^;]+);base64,(.+)$/)
+  const match = source.match(/^data:([^;,]*)((?:;[^;,]*)*)?,(.+)$/)
   if (!match) return null
-  const mimeType = match[1]
-  const buffer = Buffer.from(match[2], 'base64')
+  const mimeType = match[1] || 'application/octet-stream'
+  const isBase64 = /(?:^|;)base64/.test(match[2] ?? '')
+  const buffer = isBase64 ? Buffer.from(match[3], 'base64') : percentDecodeBytes(match[3])
   return { buffer, fileName: `file.${guessExtension(mimeType)}`, mimeType }
 }
 
@@ -165,25 +182,32 @@ function resolveFileType(mimeType: string | undefined, elementType: DifyFileType
   return mime === 'custom' && elementType !== 'custom' ? elementType : mime
 }
 
+/** 上传数量与单文件大小限制（0 不限；大小与 Dify 各类型上限取较小值） */
+export interface UploadLimit {
+  maxCount: number
+  maxSizeMb: number
+}
+
 /** 上传单个候选；失败/超限只记日志返回 null，不影响整体 */
 async function uploadOne(
   ctx: Context,
   client: DifyClient,
   candidate: FileCandidate,
-  difyUser: string
+  difyUser: string,
+  limit: UploadLimit
 ): Promise<DifyInputFileObject | null> {
   try {
     const payload = await resolveFilePayload(ctx, candidate)
     if (!payload) return null
     const type = resolveFileType(payload.mimeType, candidate.type)
-    const limit = SIZE_LIMITS[type]
-    if (payload.buffer.length > limit) {
+    const maxBytes = limit.maxSizeMb > 0 ? limit.maxSizeMb * MB : Infinity
+    const sizeLimit = Math.min(SIZE_LIMITS[type], maxBytes)
+    if (payload.buffer.length > sizeLimit) {
       ctx.logger.warn(
-        '文件 %s (%dMB) 超过 %s 类型上限 %dMB，跳过',
+        '文件 %s (%dMB) 超过上限 %dMB，跳过',
         payload.fileName,
         Math.round(payload.buffer.length / MB),
-        type,
-        Math.round(limit / MB)
+        Math.round(sizeLimit / MB)
       )
       return null
     }
@@ -198,18 +222,40 @@ async function uploadOne(
   }
 }
 
-/** 提取并上传消息中的文件，返回可附加到请求体的 files 数组 */
-export async function uploadMessageFiles(
+/** 一次上传的产物：成功的 files 载荷 + 被丢弃候选的来源 URL（截断/超限/失败统一记录，供占位符注记） */
+export interface UploadResult {
+  files: DifyInputFileObject[]
+  dropped: string[]
+}
+
+/** 上传一批候选（入口按 type:source 去重，再按数量上限截断、逐个上传） */
+export async function uploadCandidates(
   ctx: Context,
   client: DifyClient,
-  session: Session,
-  difyUser: string
-): Promise<DifyInputFileObject[]> {
-  const candidates = extractFileCandidates(session)
-  const files: DifyInputFileObject[] = []
-  for (const candidate of candidates) {
-    const uploaded = await uploadOne(ctx, client, candidate, difyUser)
-    if (uploaded) files.push(uploaded)
+  candidates: FileCandidate[],
+  difyUser: string,
+  limit: UploadLimit
+): Promise<UploadResult> {
+  // 消息元素提取与窗口条目 URL 合流的候选可能有同图重复，统一在此去重；
+  // 同一 URL 即同一文件（同 URL 双元素类型不重复上传），先到先得保留首个候选的类型
+  const seen = new Set<string>()
+  const unique = candidates.filter((candidate) => {
+    if (seen.has(candidate.source)) return false
+    seen.add(candidate.source)
+    return true
+  })
+  const limited = limit.maxCount > 0 ? unique.slice(0, limit.maxCount) : unique
+  // 同一 URL 可能以不同元素类型出现（去重键含类型拦不住），入列查重防占位符双重注记
+  const dropped: string[] = []
+  const markDropped = (source: string) => {
+    if (!dropped.includes(source)) dropped.push(source)
   }
-  return files
+  unique.slice(limited.length).forEach((candidate) => markDropped(candidate.source))
+  const files: DifyInputFileObject[] = []
+  for (const candidate of limited) {
+    const uploaded = await uploadOne(ctx, client, candidate, difyUser, limit)
+    if (uploaded) files.push(uploaded)
+    else markDropped(candidate.source)
+  }
+  return { files, dropped }
 }

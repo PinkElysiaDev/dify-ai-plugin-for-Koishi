@@ -1,6 +1,6 @@
 import type { Session } from 'koishi'
 
-/** 消息驱动的触发原因 */
+/** 消息驱动的触发原因（merged = 冷却期内多条触发消息合并为一次触发） */
 export type MessageTriggerType =
   | 'keyword-prefix'
   | 'keyword-contains'
@@ -8,11 +8,17 @@ export type MessageTriggerType =
   | 'at-user'
   | 'quote-bot'
   | 'quote-user'
+  | 'merged'
 
 /** 非消息驱动的触发原因 */
 export type ProactiveTriggerType = 'schedule' | 'density'
 
 export type TriggerType = MessageTriggerType | ProactiveTriggerType
+
+/** 是否由消息触发（合并触发也算）：定时与密度触发没有单一触发消息 */
+export function isMessageTrigger(type: TriggerType): boolean {
+  return type !== 'schedule' && type !== 'density'
+}
 
 /** 关键词条件（prefix 触发时剥离关键词作为 query，contains 保留全文） */
 export interface KeywordCondition {
@@ -96,6 +102,7 @@ export type VariableSource =
   | { type: 'session'; key: SessionField }
   | { type: 'history'; limit?: number }
   | { type: 'meta'; key: MetaField }
+  | { type: 'constant'; value: string }
 
 /** 一条变量映射：Dify inputs 字段名 ← 来源 */
 export interface VariableBinding {
@@ -105,6 +112,11 @@ export interface VariableBinding {
 
 /** Dify 会话绑定粒度 */
 export type ConversationScope = 'per-user' | 'per-guild' | 'per-channel' | 'global'
+
+/** 触发后冷却设置（schema 规范化后的内部形态；null 表示关闭） */
+export type CooldownSetting =
+  | { mode: 'fixed'; ms: number }
+  | { mode: 'sliding'; minMs: number; maxMs: number }
 
 /** 触发规则（配置页 schema 规范化后的内部形态；身份即 name，按优先级降序排列） */
 export interface DifyRule {
@@ -132,6 +144,10 @@ export interface FireContext {
   rule: DifyRule
   /** 发给 Dify 的 query：统一消息格式（消息触发为单行，窗口触发为逐行拼接） */
   queryText: string
-  /** content 变量的值：消息触发为剥离文本，窗口触发为统一格式拼接 */
+  /** content 变量的值：消息触发为剥离文本（剔除 @bot），窗口触发为精简行拼接 */
   contentText: string
+  /** 本次触发相关消息的图片 URL（合并/密度/定时的池或缓冲条目合集）：供上传管线补齐非首条消息的图片 */
+  imageUrls?: string[]
+  /** 无 session 的主动触发（定时/密度到期）从消息池透传的私聊标记：会话绑定与 isDirect 变量用 */
+  isDirect?: boolean
 }

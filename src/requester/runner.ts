@@ -1,9 +1,9 @@
 import { Context, h } from 'koishi'
-import { AppConfigEntry, Config } from '../config'
-import { DifyRule, FireContext } from '../types'
+import { AppConfigEntry, Config, resolveQuoteConfig, resolveUploadConfig } from '../config'
+import { DifyRule, FireContext, isMessageTrigger } from '../types'
 import { MessageHistory } from '../history'
 import { createDifyClient, DifyClient } from '../api/client'
-import { uploadMessageFiles } from './files'
+import { extractFileCandidates, uploadCandidates } from './files'
 import {
   DifyApiError,
   DifyFilePayload,
@@ -13,6 +13,7 @@ import {
 import { ConversationStore } from '../state/conversation'
 import { resolveVariables } from './variables'
 import { renderReply } from './render'
+import { annotateDroppedPlaceholders } from '../utils/session-text'
 import { errorMessage } from '../utils/errors'
 
 /** 一次请求的产出（blocking 响应解析后的统一形态） */
@@ -58,6 +59,7 @@ function extractTextOutputs(outputs: Record<string, any> | null | undefined): st
 /** workflow blocking 响应 → 统一回复形态（失败/中止状态抛 DifyApiError）；导出供冒烟测试直测 */
 export function parseWorkflowResponse(response: WorkflowBlockingResponse): DifyReply {
   const data = response.data
+  if (!data) throw new DifyApiError('workflow 响应缺少 data', 200)
   if (data.error) throw new DifyApiError(data.error, 200)
   if (data.status && !SUCCESS_STATUSES.includes(data.status)) {
     throw new DifyApiError(`workflow ${data.status}`, 200)
@@ -93,6 +95,7 @@ export class RequestRunner {
   }
 
   async run(fireCtx: FireContext): Promise<void> {
+    const startedAt = Date.now()
     const { rule } = fireCtx
     const app = this.apps.get(rule.app)
     if (!app) {
@@ -109,11 +112,28 @@ export class RequestRunner {
       uploadedFiles: []
     }
 
-    // 文件上传管线：消息触发时提取消息中的文件并上传，附加到请求体。
+    // 文件上传管线：消息触发取会话元素候选（含音视频文件），窗口类触发（合并/密度/定时）
+    // 经 fireCtx.imageUrls 补齐相关消息的图片；同 URL 重复由上传入口去重。
     // 注意：workflow 的「文件型输入变量」（inputs 内嵌文件对象）不在本管线范围内，
     // 顶层 files 已覆盖视觉模型组合输入的主场景。
-    if (this.config.uploadFiles !== false && fireCtx.session) {
-      requestCtx.uploadedFiles = await uploadMessageFiles(this.ctx, client, fireCtx.session, requestCtx.difyUser)
+    const upload = resolveUploadConfig(this.config)
+    if (upload.enabled) {
+      const sessionCandidates = fireCtx.session ? extractFileCandidates(fireCtx.session) : []
+      const urlCandidates = (fireCtx.imageUrls ?? [])
+        .filter((url) => !sessionCandidates.some((candidate) => candidate.source === url))
+        .map((url) => ({ source: url, type: 'image' as const }))
+      const { files, dropped } = await uploadCandidates(
+        this.ctx,
+        client,
+        [...sessionCandidates, ...urlCandidates],
+        requestCtx.difyUser,
+        { maxCount: upload.maxCount, maxSizeMb: upload.maxMb }
+      )
+      requestCtx.uploadedFiles = files
+      // 被丢弃图片在 query 的占位符上注明已丢弃，模型可感知缺图原因
+      if (dropped.length) {
+        fireCtx.queryText = annotateDroppedPlaceholders(fireCtx.queryText, dropped)
+      }
     }
 
     let reply: DifyReply
@@ -135,10 +155,19 @@ export class RequestRunner {
     const messages = renderReply({
       text: reply.text,
       files: reply.files,
-      quoteMessageId: fireCtx.session?.messageId,
+      quoteMessageId: this.shouldQuoteReply(fireCtx, startedAt) ? fireCtx.session?.messageId : undefined,
       config: this.config
     })
     await this.deliver(fireCtx, messages)
+  }
+
+  /** 引用判定：开关开启、回复耗时达到阈值、且由消息触发（定时与密度没有单一触发消息） */
+  private shouldQuoteReply(fireCtx: FireContext, startedAt: number): boolean {
+    const quote = resolveQuoteConfig(this.config)
+    if (!quote.enabled) return false
+    return (
+      (Date.now() - startedAt) / 1000 >= quote.minElapsedSeconds && isMessageTrigger(fireCtx.triggerType)
+    )
   }
 
   /** 按应用类型分流：workflow/completion 无会话，chat 系续接 conversation_id */
@@ -187,8 +216,11 @@ export class RequestRunner {
       }
       return
     }
-    // 定时摘要触发无 session：挑选该平台上任一在线 bot 发送到窗口收集的频道
-    const bot = Object.values(this.ctx.bots).find((b) => b.platform === fireCtx.platform)
+    // 定时摘要与密度到期复查触发（无 session）：优先用触发凭据里的 bot 账号，离线才回退同平台任一 bot
+    const bots = Object.values(this.ctx.bots)
+    const bot =
+      bots.find((b) => b.platform === fireCtx.platform && b.selfId === fireCtx.selfId) ??
+      bots.find((b) => b.platform === fireCtx.platform)
     if (!bot) {
       this.ctx.logger.warn('平台 %s 上没有可用 bot，无法发送主动消息', fireCtx.platform)
       return

@@ -1,5 +1,5 @@
 import { Session } from 'koishi'
-import { extractTextWithPlaceholders } from './utils/session-text'
+import { extractImageUrls, extractTextWithPlaceholders } from './utils/session-text'
 import { channelKeyOf } from './utils/keys'
 
 /** 被引用消息的呈现所需字段（无消息 ID，与格式规范一致） */
@@ -15,8 +15,12 @@ export interface HistoryEntry {
   userId: string
   username: string
   messageId?: string
-  /** 纯文本 + 图片占位符 */
+  /** 原貌（含 @bot 渲染与图片占位）：统一格式行（query/历史变量）用 */
   content: string
+  /** 剔除 @bot 的原貌：content 变量与精简行用 */
+  contentText: string
+  /** 图片元素 URL（按元素序，与 content 中 [image:摘要] 序一致）：窗口类触发的上传依据 */
+  imageUrls?: string[]
   timestamp: number
   quote?: QuotedMessage
 }
@@ -53,6 +57,13 @@ export function formatHistoryEntries(entries: HistoryEntry[]): string {
   return entries.map(formatHistoryEntry).join('\n')
 }
 
+/** 精简行：只记消息 ID 与剔除 @bot 的原貌内容，不带时间与作者前缀——窗口触发的 content 变量用 */
+export function formatHistoryBrief(entries: HistoryEntry[]): string {
+  return entries
+    .map((entry) => (entry.messageId ? `[msg:${entry.messageId}] ${entry.contentText}` : entry.contentText))
+    .join('\n')
+}
+
 function buildQuote(session: Session): QuotedMessage | undefined {
   const quote = session.quote
   if (!quote?.user?.id) return undefined
@@ -68,12 +79,15 @@ function buildQuote(session: Session): QuotedMessage | undefined {
 export function buildHistoryEntry(session: Session, role: 'user' | 'assistant' = 'user'): HistoryEntry | null {
   const content = extractTextWithPlaceholders(session)
   if (!content) return null
+  const imageUrls = extractImageUrls(session)
   return {
     role,
     userId: role === 'assistant' ? session.selfId : session.userId ?? '未知用户',
-    username: role === 'assistant' ? '你自己的发言' : session.username || session.userId || '用户',
+    username: role === 'assistant' ? '你自己的发言' : session.username || session.userId,
     messageId: session.messageId,
     content,
+    contentText: extractTextWithPlaceholders(session, { excludeBotAt: true }),
+    ...(imageUrls.length ? { imageUrls } : {}),
     timestamp: session.timestamp ?? Date.now(),
     quote: role === 'user' ? buildQuote(session) : undefined
   }

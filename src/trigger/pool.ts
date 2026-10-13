@@ -1,11 +1,11 @@
 import { Session } from 'koishi'
-import { DifyRule } from '../types'
+import { DensityCondition, DifyRule } from '../types'
 import { HistoryEntry } from '../history'
 import { matchScope } from './conditions'
 import { channelKeyOf } from '../utils/keys'
 
 /** 每频道池容量上限：无规则触发时防止缓冲无限增长 */
-const POOL_CAPACITY = 256
+const POOL_CAPACITY = 1024
 
 /** 一个频道的缓冲池：密度与定时共用，谁先触发谁取走清空 */
 export interface ChannelPool {
@@ -32,6 +32,9 @@ function scopeSessionOf(pool: ChannelPool, entry: HistoryEntry): Session {
 
 export interface DensityFire {
   rule: DifyRule
+  /** 命中的密度条件与其在规则内的下标（密度冷却通道键） */
+  condition: DensityCondition
+  conditionIndex: number
   /** 触发时取走的该频道全池消息（含 bot 行与时效外条目） */
   entries: HistoryEntry[]
 }
@@ -68,32 +71,57 @@ export class MessagePool {
     }
   }
 
+  /** 时效内且通过规则作用域的真人条数（bot 行不推高密度，防自激励） */
+  private countQualified(pool: ChannelPool, rule: DifyRule, condition: DensityCondition, now: number): number {
+    const windowMs = condition.densityWindowSeconds * 1000
+    return pool.entries.filter(
+      (item) =>
+        item.role === 'user' &&
+        now - item.timestamp <= windowMs &&
+        matchScope(rule.scope, scopeSessionOf(pool, item))
+    ).length
+  }
+
   /**
    * 新消息入池后的密度评估：时效内（相对触发消息）且通过规则作用域的真人条数达到阈值。
    * 触发即取走并清空该频道全池（bot 行不推高密度，防自激励）；池清空后其余规则无从触发。
+   * skip 返回 true 的条件（冷却中的密度条件）不参与判定。
    */
-  checkDensity(rules: DifyRule[], session: Session): DensityFire[] {
+  checkDensity(
+    rules: DifyRule[],
+    session: Session,
+    skip?: (rule: DifyRule, condition: DensityCondition, index: number) => boolean
+  ): DensityFire[] {
     const key = channelKeyOf(session.platform, session.channelId)
     const pool = this.channels.get(key)
     if (!pool) return []
     const now = session.timestamp ?? Date.now()
     for (const rule of rules) {
-      for (const condition of rule.conditions) {
+      for (let index = 0; index < rule.conditions.length; index++) {
+        const condition = rule.conditions[index]
         if (condition.type !== 'density') continue
-        const windowMs = condition.densityWindowSeconds * 1000
-        const count = pool.entries.filter(
-          (item) =>
-            item.role === 'user' &&
-            now - item.timestamp <= windowMs &&
-            matchScope(rule.scope, scopeSessionOf(pool, item))
-        ).length
-        if (count >= condition.densityCount) {
+        if (skip?.(rule, condition, index)) continue
+        if (this.countQualified(pool, rule, condition, now) >= condition.densityCount) {
           this.channels.delete(key)
-          return [{ rule, entries: pool.entries }]
+          return [{ rule, condition, conditionIndex: index, entries: pool.entries }]
         }
       }
     }
     return []
+  }
+
+  /** 冷却到期复查：按条件参数统计该频道池（now 为复查时刻），达标即取走整池，未达标返回 null */
+  takeDensityChannel(
+    rule: DifyRule,
+    condition: DensityCondition,
+    channelKey: string,
+    now: number
+  ): ChannelPool | null {
+    const pool = this.channels.get(channelKey)
+    if (!pool) return null
+    if (this.countQualified(pool, rule, condition, now) < condition.densityCount) return null
+    this.channels.delete(channelKey)
+    return pool
   }
 
   /** 定时到点：取走该规则作用域内有消息的所有频道（整池清空，含未过作用域的条目） */

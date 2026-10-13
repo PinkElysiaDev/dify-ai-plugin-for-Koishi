@@ -30,7 +30,7 @@ function resolveSessionField(key: SessionField, fireCtx: FireContext, now: strin
     case 'timestamp':
       return now
     case 'isDirect':
-      return session?.isDirect ?? false
+      return session?.isDirect ?? fireCtx.isDirect ?? false
     default:
       // 变量绑定来自用户配置，key 可能是任意字符串
       return ''
@@ -61,6 +61,8 @@ function resolveSource(
       return resolveSessionField(source.key, fireCtx, now)
     case 'meta':
       return resolveMetaField(source.key, fireCtx, now)
+    case 'constant':
+      return source.value
     case 'history': {
       const channelKey = channelKeyOf(fireCtx.platform, fireCtx.channelId)
       // 默认条数与 MessageHistory 实例同源（config.historyLimit），不再单独写死
