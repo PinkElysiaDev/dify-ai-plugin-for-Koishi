@@ -112,29 +112,7 @@ export class RequestRunner {
       uploadedFiles: []
     }
 
-    // 文件上传管线：消息触发取会话元素候选（含音视频文件），窗口类触发（合并/密度/定时）
-    // 经 fireCtx.imageUrls 补齐相关消息的图片；同 URL 重复由上传入口去重。
-    // 注意：workflow 的「文件型输入变量」（inputs 内嵌文件对象）不在本管线范围内，
-    // 顶层 files 已覆盖视觉模型组合输入的主场景。
-    const upload = resolveUploadConfig(this.config)
-    if (upload.enabled) {
-      const sessionCandidates = fireCtx.session ? extractFileCandidates(fireCtx.session) : []
-      const urlCandidates = (fireCtx.imageUrls ?? [])
-        .filter((url) => !sessionCandidates.some((candidate) => candidate.source === url))
-        .map((url) => ({ source: url, type: 'image' as const }))
-      const { files, dropped } = await uploadCandidates(
-        this.ctx,
-        client,
-        [...sessionCandidates, ...urlCandidates],
-        requestCtx.difyUser,
-        { maxCount: upload.maxCount, maxSizeMb: upload.maxMb }
-      )
-      requestCtx.uploadedFiles = files
-      // 被丢弃图片在 query 的占位符上注明已丢弃，模型可感知缺图原因
-      if (dropped.length) {
-        fireCtx.queryText = annotateDroppedPlaceholders(fireCtx.queryText, dropped)
-      }
-    }
+    await this.uploadTriggerFiles(fireCtx, client, requestCtx)
 
     let reply: DifyReply
     try {
@@ -159,6 +137,31 @@ export class RequestRunner {
       config: this.config
     })
     await this.deliver(fireCtx, messages)
+  }
+
+  /**
+   * 文件上传管线：消息触发取会话元素候选（含音视频文件），窗口类触发（合并/密度/定时）
+   * 经 fireCtx.imageUrls 补齐相关消息的图片；同 URL 重复由上传入口去重；
+   * 被丢弃图片在 query 的占位符上注明已丢弃，模型可感知缺图原因。
+   * 注意：workflow 的「文件型输入变量」（inputs 内嵌文件对象）不在本管线范围内，
+   * 顶层 files 已覆盖视觉模型组合输入的主场景。
+   */
+  private async uploadTriggerFiles(fireCtx: FireContext, client: DifyClient, requestCtx: RequestContext) {
+    const upload = resolveUploadConfig(this.config)
+    if (!upload.enabled) return
+    const sessionCandidates = fireCtx.session ? extractFileCandidates(fireCtx.session) : []
+    const urlCandidates = (fireCtx.imageUrls ?? []).map((url) => ({ source: url, type: 'image' as const }))
+    const { files, dropped } = await uploadCandidates(
+      this.ctx,
+      client,
+      [...sessionCandidates, ...urlCandidates],
+      requestCtx.difyUser,
+      { maxCount: upload.maxCount, maxSizeMb: upload.maxMb }
+    )
+    requestCtx.uploadedFiles = files
+    if (dropped.length) {
+      fireCtx.queryText = annotateDroppedPlaceholders(fireCtx.queryText, dropped)
+    }
   }
 
   /** 引用判定：开关开启、回复耗时达到阈值、且由消息触发（定时与密度没有单一触发消息） */
@@ -208,12 +211,17 @@ export class RequestRunner {
     return { text: response.answer, files: [] }
   }
 
+  /** 逐条发送，单条失败仅告警不中断 */
+  private async sendAll(messages: h[][], send: (message: h[]) => Promise<unknown>) {
+    for (const message of messages) {
+      await send(message).catch((error) => this.ctx.logger.warn(error))
+    }
+  }
+
   private async deliver(fireCtx: FireContext, messages: h[][]) {
     if (!messages.length) return
     if (fireCtx.session) {
-      for (const message of messages) {
-        await fireCtx.session.send(message).catch((error) => this.ctx.logger.warn(error))
-      }
+      await this.sendAll(messages, (message) => fireCtx.session.send(message))
       return
     }
     // 定时摘要与密度到期复查触发（无 session）：优先用触发凭据里的 bot 账号，离线才回退同平台任一 bot
@@ -225,8 +233,6 @@ export class RequestRunner {
       this.ctx.logger.warn('平台 %s 上没有可用 bot，无法发送主动消息', fireCtx.platform)
       return
     }
-    for (const message of messages) {
-      await bot.sendMessage(fireCtx.channelId, message).catch((error) => this.ctx.logger.warn(error))
-    }
+    await this.sendAll(messages, (message) => bot.sendMessage(fireCtx.channelId, message))
   }
 }

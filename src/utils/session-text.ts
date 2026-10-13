@@ -52,6 +52,16 @@ interface ExtractVerbatimOptions {
   excludeBotAt?: boolean
 }
 
+/** 图片元素判定（img 与 image 两种元素名，占位符渲染与 URL 提取共用） */
+function isImageElement(element: h): boolean {
+  return element.type === 'img' || element.type === 'image'
+}
+
+/** 媒体元素的源地址（url 或 src 属性，未定形态原样返回由调用方守卫） */
+export function imageSourceOf(element: h): unknown {
+  return element.attrs?.['url'] ?? element.attrs?.['src']
+}
+
 /** 会话消息元素：elements 为空时回退解析 content（各提取函数共用） */
 function elementsOf(session: Session): h[] {
   if (session.elements?.length) return session.elements
@@ -80,8 +90,8 @@ export function extractTextWithPlaceholders(
       if (options.excludeBotAt && element.attrs?.['id'] === session.selfId) continue
       const name = element.attrs?.['name'] ?? element.attrs?.['id']
       if (name) parts.push(`@${name}`)
-    } else if (element.type === 'img' || element.type === 'image') {
-      parts.push(imagePlaceholder(element.attrs?.['url'] ?? element.attrs?.['src']))
+    } else if (isImageElement(element)) {
+      parts.push(imagePlaceholder(imageSourceOf(element) as string | undefined))
     }
   }
   return parts.join(' ').replace(/\s+/g, ' ').trim()
@@ -91,8 +101,8 @@ export function extractTextWithPlaceholders(
 export function extractImageUrls(session: Session): string[] {
   const urls: string[] = []
   for (const element of elementsOf(session)) {
-    if (element.type !== 'img' && element.type !== 'image') continue
-    const source = element.attrs?.['url'] ?? element.attrs?.['src']
+    if (!isImageElement(element)) continue
+    const source = imageSourceOf(element)
     if (typeof source === 'string' && source) urls.push(source)
   }
   return urls

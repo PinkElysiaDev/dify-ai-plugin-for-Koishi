@@ -5,6 +5,7 @@ import { basename, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { DifyClient } from '../api/client'
 import { DifyInputFileObject } from '../api/types'
+import { imageSourceOf } from '../utils/session-text'
 
 type DifyFileType = DifyInputFileObject['type']
 
@@ -77,6 +78,11 @@ function guessExtension(mimeType: string): string {
   return found ? found[0] : 'bin'
 }
 
+/** 源地址推不出文件名时的兜底名（按 mime 猜扩展名） */
+function fallbackFileName(mimeType: string): string {
+  return `file.${guessExtension(mimeType)}`
+}
+
 /** mime → Dify 文件类型 */
 export function mimeToFileType(mimeType?: string): DifyFileType {
   if (!mimeType) return 'custom'
@@ -95,18 +101,14 @@ export function mimeToFileType(mimeType?: string): DifyFileType {
   return 'custom'
 }
 
-/** 从消息元素中提取可上传的文件候选（图片/语音/视频/附件），按来源去重 */
+/** 从消息元素中提取可上传的文件候选（图片/语音/视频/附件）；同源去重由上传入口统一处理 */
 export function extractFileCandidates(session: Session): FileCandidate[] {
   const candidates: FileCandidate[] = []
-  const seen = new Set<string>()
   for (const element of session.elements ?? []) {
     const difyType = ELEMENT_TYPE[element.type]
     if (!difyType) continue
-    const source = element.attrs?.['url'] ?? element.attrs?.['src']
+    const source = imageSourceOf(element)
     if (typeof source !== 'string' || !source) continue
-    const key = `${difyType}:${source}`
-    if (seen.has(key)) continue
-    seen.add(key)
     candidates.push({ source, type: difyType })
   }
   return candidates
@@ -134,7 +136,7 @@ function parseDataUrl(source: string): FilePayload | null {
   const mimeType = match[1] || 'application/octet-stream'
   const isBase64 = /(?:^|;)base64/.test(match[2] ?? '')
   const buffer = isBase64 ? Buffer.from(match[3], 'base64') : percentDecodeBytes(match[3])
-  return { buffer, fileName: `file.${guessExtension(mimeType)}`, mimeType }
+  return { buffer, fileName: fallbackFileName(mimeType), mimeType }
 }
 
 async function readLocalFile(ctx: Context, source: string): Promise<FilePayload | null> {
@@ -145,7 +147,7 @@ async function readLocalFile(ctx: Context, source: string): Promise<FilePayload 
   }
   const buffer = await readFile(filePath)
   const mimeType = guessMime(extname(filePath))
-  return { buffer, fileName: basename(filePath) || `file.${guessExtension(mimeType)}`, mimeType }
+  return { buffer, fileName: basename(filePath) || fallbackFileName(mimeType), mimeType }
 }
 
 async function fetchRemoteFile(ctx: Context, source: string): Promise<FilePayload | null> {
@@ -161,7 +163,7 @@ async function fetchRemoteFile(ctx: Context, source: string): Promise<FilePayloa
       fileName = decodeURIComponent(basename(new URL(source).pathname))
     } catch {}
     const mimeType = guessMime(extname(fileName))
-    return { buffer, fileName: fileName || `file.${guessExtension(mimeType)}`, mimeType }
+    return { buffer, fileName: fileName || fallbackFileName(mimeType), mimeType }
   } catch (error) {
     ctx.logger.warn('下载远程文件失败：%s (%s)', source, error)
     return null
@@ -228,7 +230,7 @@ export interface UploadResult {
   dropped: string[]
 }
 
-/** 上传一批候选（入口按 type:source 去重，再按数量上限截断、逐个上传） */
+/** 上传一批候选（入口按来源 URL 去重，再按数量上限截断、逐个上传） */
 export async function uploadCandidates(
   ctx: Context,
   client: DifyClient,
@@ -245,7 +247,6 @@ export async function uploadCandidates(
     return true
   })
   const limited = limit.maxCount > 0 ? unique.slice(0, limit.maxCount) : unique
-  // 同一 URL 可能以不同元素类型出现（去重键含类型拦不住），入列查重防占位符双重注记
   const dropped: string[] = []
   const markDropped = (source: string) => {
     if (!dropped.includes(source)) dropped.push(source)
