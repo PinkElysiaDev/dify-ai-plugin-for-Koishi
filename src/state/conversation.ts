@@ -88,12 +88,16 @@ export class ConversationStore {
     /** 首段是应用 ID（配置留空时即应用名） */
     appId: string
     platform: string
-    /** user / private / guild / channel；global 段只有应用 ID，无平台与粒度段 */
+    /** user / private / guild / channel / global；global 键只有两段（appId:global），无平台段 */
     scope?: string
     /** scope 之后的 id 片段 */
     ids: string[]
   } {
-    const [appId, platform, , scope, ...ids] = bindingKey.split(':')
+    const segments = bindingKey.split(':')
+    if (segments.length === 2 && segments[1] === 'global') {
+      return { appId: segments[0], platform: '', scope: 'global', ids: [] }
+    }
+    const [appId, platform, , scope, ...ids] = segments
     return { appId, platform, scope, ids }
   }
 
