@@ -20,7 +20,7 @@ export class ConversationStore {
 
   /** 粒度归一：bindingKey 与 difyUser 共用，保证两者始终对齐 */
   private resolveScopeDimension(rule: DifyRule, fireCtx: FireContext): ScopeDimension {
-    if (fireCtx.session?.isDirect || rule.conversationScope === 'per-user') return 'user'
+    if (this.isDirectOf(fireCtx) || rule.conversationScope === 'per-user') return 'user'
     switch (rule.conversationScope) {
       case 'global':
         return 'global'
@@ -31,13 +31,18 @@ export class ConversationStore {
     }
   }
 
+  /** 私聊判定：有 session 读 session，无 session 的主动触发读池透传的标记 */
+  private isDirectOf(fireCtx: FireContext): boolean {
+    return fireCtx.session?.isDirect ?? fireCtx.isDirect ?? false
+  }
+
   /** bindingKey = 应用 ID + 粒度 + 平台身份 */
   computeBindingKey(appId: string, rule: DifyRule, fireCtx: FireContext): string {
     const base = `${appId}:${fireCtx.platform}:${fireCtx.selfId}`
     switch (this.resolveScopeDimension(rule, fireCtx)) {
       // 群内按「群+用户」区分；私聊用 private 段占位
       case 'user':
-        return fireCtx.session?.isDirect
+        return this.isDirectOf(fireCtx)
           ? `${base}:private:${fireCtx.userId ?? fireCtx.channelId}`
           : `${base}:user:${fireCtx.guildId ?? fireCtx.channelId}:${fireCtx.userId ?? fireCtx.channelId}`
       case 'guild':
@@ -57,7 +62,7 @@ export class ConversationStore {
   computeDifyUser(rule: DifyRule, fireCtx: FireContext): string {
     switch (this.resolveScopeDimension(rule, fireCtx)) {
       case 'user':
-        return fireCtx.session?.isDirect
+        return this.isDirectOf(fireCtx)
           ? `koishi:${fireCtx.platform}:private:${fireCtx.userId ?? fireCtx.channelId}`
           : `koishi:${fireCtx.platform}:${fireCtx.guildId ?? fireCtx.channelId}:${fireCtx.userId ?? fireCtx.channelId}`
       case 'guild':
@@ -112,17 +117,33 @@ export class ConversationStore {
   /**
    * 重置匹配的绑定：本地删行 + 尽力删除 Dify 侧会话（失败仅记录）。
    * 表已无 guildKey 列，按频道匹配时全表读回后解析 bindingKey 过滤（行数量级很小）。
+   * 覆盖 guild / user（群内）/ channel 段与私聊执行时的 private 段；
+   * global 段跨频道，不随单频道重置。
    */
-  async resetWhere(filter: { bindingKey?: string; guildKey?: string }): Promise<number> {
+  async resetWhere(filter: {
+    bindingKey?: string
+    guildKey?: string
+    channelKey?: string
+    isDirect?: boolean
+    userId?: string
+  }): Promise<number> {
     const rows = await this.ctx.database.get('dify_conversation', {})
+    // 键内 id 片段可能内嵌冒号（私聊频道形如 private:12345），用首冒号切分而非 split
+    const splitKey = (key: string): [string, string] => {
+      const separator = key.indexOf(':')
+      return separator < 0 ? [key, ''] : [key.slice(0, separator), key.slice(separator + 1)]
+    }
+    const [guildPlatform, guildId] = splitKey(filter.guildKey ?? '')
+    const [channelPlatform, channelId] = splitKey(filter.channelKey ?? '')
     const matched = rows.filter((row) => {
       if (filter.bindingKey) return row.bindingKey === filter.bindingKey
       const { platform, scope, ids } = this.parseBindingKey(row.bindingKey)
-      const [guildPlatform, guildId] = (filter.guildKey ?? '').split(':')
       if (platform !== guildPlatform) return false
       if (scope === 'guild') return ids[0] === guildId
       if (scope === 'user') return ids.length === 2 ? ids[0] === guildId : false
-      // private 段是另一个会话，不参与按群重置
+      if (scope === 'channel') return platform === channelPlatform && ids[0] === channelId
+      if (scope === 'private') return filter.isDirect === true && ids[0] === filter.userId
+      // global 段跨频道，不随单频道重置
       return false
     })
     let reset = 0
