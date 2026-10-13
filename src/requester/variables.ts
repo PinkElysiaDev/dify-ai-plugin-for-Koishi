@@ -50,25 +50,27 @@ function resolveMetaField(key: MetaField, fireCtx: FireContext, now: string) {
   }
 }
 
+/** 历史消息变量：条数默认与 MessageHistory 实例同源（config.historyLimit） */
+function historyVariableOf(fireCtx: FireContext, history: MessageHistory, limit?: number) {
+  const channelKey = channelKeyOf(fireCtx.platform, fireCtx.channelId)
+  return history.toVariable(history.get(channelKey, limit ?? history.limit))
+}
+
 function resolveSource(
   source: VariableSource,
   fireCtx: FireContext,
   history: MessageHistory,
   now: string
 ) {
-  switch (source?.type) {
+  switch (source.type) {
     case 'session':
       return resolveSessionField(source.key, fireCtx, now)
     case 'meta':
       return resolveMetaField(source.key, fireCtx, now)
     case 'constant':
       return source.value
-    case 'history': {
-      const channelKey = channelKeyOf(fireCtx.platform, fireCtx.channelId)
-      // 默认条数与 MessageHistory 实例同源（config.historyLimit），不再单独写死
-      const limit = source.limit ?? history.limit
-      return history.toVariable(history.get(channelKey, limit))
-    }
+    case 'history':
+      return historyVariableOf(fireCtx, history, source.limit)
     default:
       return undefined
   }
@@ -90,21 +92,19 @@ function resolvePlaceholderValue(
   now: string
 ): boolean | string {
   if (name === 'history') {
-    const channelKey = channelKeyOf(fireCtx.platform, fireCtx.channelId)
-    return history.toVariable(history.get(channelKey, limit ?? history.limit))
+    return historyVariableOf(fireCtx, history, limit)
   }
   if (name === 'isDirect') {
-    return fireCtx.session?.isDirect ?? fireCtx.isDirect ?? false
+    return resolveSessionField('isDirect', fireCtx, now)
   }
   if (META_PLACEHOLDERS.has(name as MetaField)) {
-    return String(resolveMetaField(name as MetaField, fireCtx, now) ?? '')
+    return resolveMetaField(name as MetaField, fireCtx, now)
   }
-  const value = resolveSessionField(name as SessionField, fireCtx, now)
-  return value === undefined || value === null ? '' : String(value)
+  return String(resolveSessionField(name as SessionField, fireCtx, now))
 }
 
 /** 裸占位符字符串值（"{{x}}" 整串含引号）：替换为原生值的 JSON 字面量，类型随之保真 */
-const BARE_PLACEHOLDER = /"\{\{\s*(\w+)(?::(\d+))?\s*\}\}"/g
+const BARE_PLACEHOLDER = new RegExp(`"${JSON_PLACEHOLDER.source}"`, 'g')
 
 /** 字符串内的混合占位符转义嵌入（引号、反斜杠、换行等），不破坏 JSON 结构 */
 const escapeJsonText = (value: string) => JSON.stringify(value).slice(1, -1)
@@ -118,10 +118,10 @@ function interpolateTemplate(
 ): string {
   const resolve = (name: string, limit?: string) =>
     resolvePlaceholderValue(name, limit ? Number(limit) : undefined, fireCtx, history, now)
-  const native = template.replace(BARE_PLACEHOLDER, (_match, name: string, limit?: string) =>
+  const bareReplaced = template.replace(BARE_PLACEHOLDER, (_match, name: string, limit?: string) =>
     JSON.stringify(resolve(name, limit))
   )
-  return native.replace(JSON_PLACEHOLDER, (_match, name: string, limit?: string) =>
+  return bareReplaced.replace(JSON_PLACEHOLDER, (_match, name: string, limit?: string) =>
     escapeJsonText(String(resolve(name, limit)))
   )
 }
@@ -154,12 +154,12 @@ export function resolveVariables(
   const inputs: Record<string, any> = {}
   const now = new Date().toISOString()
   for (const binding of rule.variables) {
-    if (binding?.source?.type !== 'json') continue
+    if (binding.source.type !== 'json') continue
     const object = resolveJsonObject(binding.source.template, fireCtx, history, now)
     if (object) Object.assign(inputs, object)
   }
   for (const binding of rule.variables) {
-    if (!binding?.field || binding.source?.type === 'json') continue
+    if (binding.source.type === 'json') continue
     const value = resolveSource(binding.source, fireCtx, history, now)
     if (value !== undefined) inputs[binding.field] = value
   }
