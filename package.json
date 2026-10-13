@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-dify-ai",
   "description": "Invoke Dify apps (chatflow / workflow / completion) in Koishi with triggers and conversation bindings",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "author": "PinkElysia",
   "license": "MIT",
   "homepage": "https://github.com/PinkElysiaDev/dify-ai-plugin-for-Koishi#readme",
