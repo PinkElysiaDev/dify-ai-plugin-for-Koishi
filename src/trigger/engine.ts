@@ -1,5 +1,5 @@
 import { Context, Next, Session } from 'koishi'
-import { CooldownSetting, DifyRule, FireContext } from '../types'
+import { CooldownSetting, DensityCondition, DifyRule, FireContext } from '../types'
 import {
   MessageHistory,
   buildHistoryEntry,
@@ -25,9 +25,21 @@ import { channelKeyOf } from '../utils/keys'
 /** 调度器 tick 间隔 */
 const SCHEDULER_TICK_MS = 1_000
 
+/** 非空行拼接（合并触发的统一格式行与精简行共用） */
+const joinNonEmpty = (parts: string[]) => parts.filter(Boolean).join('\n')
+
 /** 收集条目合集的图片 URL（仅真人消息——bot 自己发的图不回传 Dify；同图重复由上传入口去重） */
 function collectImageUrls(entries: Array<HistoryEntry | null>): string[] {
   return entries.flatMap((entry) => (entry?.role === 'user' ? entry.imageUrls ?? [] : []))
+}
+
+/** 窗口触发（密度/定时到期）的三元组：统一格式 query、精简行 content、真人图片合集 */
+function windowFieldsOf(entries: HistoryEntry[]) {
+  return {
+    queryText: formatHistoryEntries(entries),
+    contentText: formatHistoryBrief(entries),
+    imageUrls: collectImageUrls(entries)
+  }
 }
 
 /** 消息会话的触发身份（无群概念的平台 guildId 回退频道） */
@@ -92,9 +104,8 @@ export class TriggerEngine {
   }
 
   private handleMessage(session: Session, next: Next) {
-    // 忽略其它 bot（含自己）的消息
-    if (this.ctx.bots[session.uid]) return next()
-    if (!session.channelId) return next()
+    // 忽略其它 bot（含自己）的消息与无频道消息
+    if (this.ctx.bots[session.uid] || !session.channelId) return next()
     const channelKey = channelKeyOf(session.platform, session.channelId)
     // 先同步收走本频道到期的冷却通道，再顺延与判定：消除「已到期但 tick 未收走」窗口里
     // beginCooldown 覆盖旧缓冲、密度通道被顺延复活的竞态。放在 entry 判定之前，
@@ -179,23 +190,15 @@ export class TriggerEngine {
       ...sessionIdentityOf(session),
       triggerType: 'density',
       rule: fire.rule,
-      queryText: formatHistoryEntries(fire.entries),
-      contentText: formatHistoryBrief(fire.entries),
-      imageUrls: collectImageUrls(fire.entries)
+      ...windowFieldsOf(fire.entries)
     })
   }
 
   /** 冷却到期：把缓冲内的触发消息合并为一次触发，session 取首条（供投递与文件上传） */
   private fireMerged(rule: DifyRule, buffer: PendingMessage[]) {
     const first = buffer[0]
-    const queryText = buffer
-      .map((item) => (item.entry ? formatHistoryEntry(item.entry) : ''))
-      .filter(Boolean)
-      .join('\n')
-    const contentText = buffer
-      .map((item) => item.contentText)
-      .filter(Boolean)
-      .join('\n')
+    const queryText = joinNonEmpty(buffer.map((item) => (item.entry ? formatHistoryEntry(item.entry) : '')))
+    const contentText = joinNonEmpty(buffer.map((item) => item.contentText))
     this.beginCooldown(channelKeyOf(first.session.platform, first.session.channelId), rule.name, 'message')
     this.run({
       session: first.session,
@@ -210,12 +213,17 @@ export class TriggerEngine {
   }
 
   /** 密度冷却到期复查达标：无当前消息，用池身份构造上下文（投递同定时路径） */
-  private fireDensityExpiry(rule: DifyRule, conditionIndex: number, channel: ChannelPool, now: number) {
+  private fireDensityExpiry(
+    rule: DifyRule,
+    condition: DensityCondition,
+    conditionIndex: number,
+    channel: ChannelPool,
+    now: number
+  ) {
     this.beginCooldown(channelKeyOf(channel.platform, channel.channelId), rule.name, densityLane(conditionIndex))
     // 取池内窗口中最后一条真人消息的作者作 userId，与即时密度触发（凑阈值消息的发送者）对齐，
     // 避免 per-user 规则在到期路径落到 channelId 伪用户、拆出第二段 Dify 会话
-    const condition = rule.conditions[conditionIndex]
-    const windowMs = condition.type === 'density' ? condition.densityWindowSeconds * 1000 : 0
+    const windowMs = condition.densityWindowSeconds * 1000
     let userId: string | undefined
     for (let i = channel.entries.length - 1; i >= 0; i--) {
       const item = channel.entries[i]
@@ -229,9 +237,7 @@ export class TriggerEngine {
       userId,
       triggerType: 'density',
       rule,
-      queryText: formatHistoryEntries(channel.entries),
-      contentText: formatHistoryBrief(channel.entries),
-      imageUrls: collectImageUrls(channel.entries),
+      ...windowFieldsOf(channel.entries),
       isDirect: channel.isDirect
     })
   }
@@ -246,9 +252,7 @@ export class TriggerEngine {
         ...poolIdentityOf(channel),
         triggerType: 'schedule',
         rule,
-        queryText: formatHistoryEntries(channel.entries),
-        contentText: formatHistoryBrief(channel.entries),
-        imageUrls: collectImageUrls(channel.entries),
+        ...windowFieldsOf(channel.entries),
         isDirect: channel.isDirect
       })
     }
@@ -277,6 +281,6 @@ export class TriggerEngine {
     const condition = rule.conditions[index]
     if (condition?.type !== 'density') return
     const channel = this.pool.takeDensityChannel(rule, condition, expired.channelKey, now)
-    if (channel) this.fireDensityExpiry(rule, index, channel, now)
+    if (channel) this.fireDensityExpiry(rule, condition, index, channel, now)
   }
 }
