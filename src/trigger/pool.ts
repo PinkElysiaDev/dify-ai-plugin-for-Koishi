@@ -32,8 +32,7 @@ function scopeSessionOf(pool: ChannelPool, entry: HistoryEntry): Session {
 
 export interface DensityFire {
   rule: DifyRule
-  /** 命中的密度条件与其在规则内的下标（密度冷却通道键） */
-  condition: DensityCondition
+  /** 命中条件在规则内的下标（密度冷却通道键） */
   conditionIndex: number
   /** 触发时取走的该频道全池消息（含 bot 行与时效外条目） */
   entries: HistoryEntry[]
@@ -103,7 +102,7 @@ export class MessagePool {
         if (skip?.(rule, condition, index)) continue
         if (this.countQualified(pool, rule, condition, now) >= condition.densityCount) {
           this.channels.delete(key)
-          return [{ rule, condition, conditionIndex: index, entries: pool.entries }]
+          return [{ rule, conditionIndex: index, entries: pool.entries }]
         }
       }
     }

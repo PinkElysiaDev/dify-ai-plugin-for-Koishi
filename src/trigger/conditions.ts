@@ -1,6 +1,6 @@
 import { Session } from 'koishi'
 import { MessageTriggerType, TriggerCondition, TriggerScope } from '../types'
-import { extractText, extractTextWithPlaceholders, IMAGE_HASH_LENGTH } from '../utils/session-text'
+import { extractText, extractTextWithPlaceholders, IMAGE_HASH_LENGTH, IMAGE_PLACEHOLDER } from '../utils/session-text'
 
 export interface ConditionMatched {
   type: MessageTriggerType
@@ -12,8 +12,13 @@ function hasAt(session: Session, id: string): boolean {
   return session.elements?.some((element) => element.type === 'at' && element.attrs?.['id'] === id) ?? false
 }
 
-/** 原貌开头的非正文前缀（@渲染 / 图片占位 / 空白）序列；占位符摘要长度与 imagePlaceholder 同源 */
-const NON_TEXT_PREFIX = new RegExp(`^(?:@\\S+|\\[image:[0-9a-f]{${IMAGE_HASH_LENGTH}}\\]|\\[图片\\]|\\s)*`)
+/** 正则字符组转义（占位符字面量 [图片] 中的方括号） */
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** 原貌开头的非正文前缀（@渲染 / 图片占位 / 空白）序列；占位符与 imagePlaceholder 同源 */
+const NON_TEXT_PREFIX = new RegExp(
+  `^(?:@\\S+|\\[image:[0-9a-f]{${IMAGE_HASH_LENGTH}}\\]|${escapeRegExp(IMAGE_PLACEHOLDER)}|\\s)*`
+)
 
 /**
  * 前缀感知剥离：原貌以「非正文前缀 + 关键词」开头时剥掉关键词并保留前缀
@@ -89,7 +94,6 @@ export function matchScope(scope: TriggerScope, session: Session): boolean {
   ]
   if (dimensions.some(([allowed, value]) => allowed?.length && !allowed.includes(value))) return false
   if (scope.excludeUsers?.length && scope.excludeUsers.includes(session.userId)) return false
-  if (scope.isDirect === true && !session.isDirect) return false
-  if (scope.isDirect === false && session.isDirect) return false
+  if (scope.isDirect != null && scope.isDirect !== !!session.isDirect) return false
   return true
 }
