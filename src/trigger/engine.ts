@@ -11,6 +11,7 @@ import {
 import { RequestRunner } from '../requester/runner'
 import { ConditionMatched, evaluateCondition, matchScope } from './conditions'
 import { ChannelPool, DensityFire, MessagePool } from './pool'
+import { registerPoolEvents } from './pool-events'
 import { RuleScheduler } from './scheduler'
 import {
   CooldownLane,
@@ -99,6 +100,8 @@ export class TriggerEngine {
       this.history.recordEntry(key, entry)
       this.pool.record(session, entry)
     })
+    // 群事件（戳一戳/入退群等）入池当上下文，不进历史变量
+    registerPoolEvents(this.ctx, this.pool)
     this.scheduler.sync(this.rules)
     this.ctx.logger.info('已加载 %d 条启用规则', this.rules.length)
   }
@@ -170,6 +173,8 @@ export class TriggerEngine {
   }
 
   private fireMessage(rule: DifyRule, session: Session, condition: ConditionMatched, entry: HistoryEntry | null) {
+    // 即时触发即消费：entry 与池内条目同引用，密度计数不再累计、摘要行尾注记已回复
+    if (entry) entry.replied = true
     this.beginCooldown(channelKeyOf(session.platform, session.channelId), rule.name, 'message')
     this.run({
       session,
@@ -196,6 +201,10 @@ export class TriggerEngine {
 
   /** 冷却到期：把缓冲内的触发消息合并为一次触发，session 取首条（供投递与文件上传） */
   private fireMerged(rule: DifyRule, buffer: PendingMessage[]) {
+    // 合并触发即消费：缓冲条目与池内同引用，标记已回复
+    for (const item of buffer) {
+      if (item.entry) item.entry.replied = true
+    }
     const first = buffer[0]
     const queryText = joinNonEmpty(buffer.map((item) => (item.entry ? formatHistoryEntry(item.entry) : '')))
     const contentText = joinNonEmpty(buffer.map((item) => item.contentText))

@@ -70,12 +70,13 @@ export class MessagePool {
     }
   }
 
-  /** 时效内且通过规则作用域的真人条数（bot 行不推高密度，防自激励） */
+  /** 时效内且通过规则作用域的真人条数（bot 行不推高密度防自激励；已即时回复过的消息不重复计数防双触发） */
   private countQualified(pool: ChannelPool, rule: DifyRule, condition: DensityCondition, now: number): number {
     const windowMs = condition.densityWindowSeconds * 1000
     return pool.entries.filter(
       (item) =>
         item.role === 'user' &&
+        !item.replied &&
         now - item.timestamp <= windowMs &&
         matchScope(rule.scope, scopeSessionOf(pool, item))
     ).length
@@ -107,6 +108,18 @@ export class MessagePool {
       }
     }
     return []
+  }
+
+  /** 给池内已有条目标注已撤回（按消息 ID 定位，找不到忽略——不新建条目） */
+  markDeleted(channelKey: string, messageId: string) {
+    const pool = this.channels.get(channelKey)
+    if (!pool) return
+    for (let i = pool.entries.length - 1; i >= 0; i--) {
+      if (pool.entries[i].messageId === messageId) {
+        pool.entries[i].deleted = true
+        return
+      }
+    }
   }
 
   /** 冷却到期复查：按条件参数统计该频道池（now 为复查时刻），达标即取走整池，未达标返回 null */

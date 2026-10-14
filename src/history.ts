@@ -11,11 +11,12 @@ export interface QuotedMessage {
 }
 
 export interface HistoryEntry {
-  role: 'user' | 'assistant'
+  /** event 为群事件条目（戳一戳/入退群等，content 即事件文案，不进历史变量） */
+  role: 'user' | 'assistant' | 'event'
   userId: string
   username: string
   messageId?: string
-  /** 原貌（含 @bot 渲染与图片占位）：统一格式行（query/历史变量）用 */
+  /** 原貌（含 @bot 渲染与图片占位）：统一格式行（query/历史变量）用；event 为事件文案 */
   content: string
   /** 剔除 @bot 的原貌：content 变量与精简行用 */
   contentText: string
@@ -23,6 +24,10 @@ export interface HistoryEntry {
   imageUrls?: string[]
   timestamp: number
   quote?: QuotedMessage
+  /** 即时触发已消费过该消息（密度计数排除，渲染行尾注记） */
+  replied?: boolean
+  /** 该消息已被撤回（渲染行尾注记） */
+  deleted?: boolean
 }
 
 /** 缓冲容量相对默认条数的放大倍数与下限（防长窗口的密度统计被截断） */
@@ -44,13 +49,22 @@ function formatTimestamp(timestamp: number): string {
  * `[时间] 昵称 (用户ID) [msg:消息ID]（引用了 [时间] 昵称 (用户ID) 说：内容）说：内容`
  * 引用段与外层同构但不展示消息 ID；无引用则整段省略。
  */
+/** 行尾状态注记（可叠加） */
+function entryAnnotations(entry: HistoryEntry): string {
+  return `${entry.replied ? '（已回复）' : ''}${entry.deleted ? '（已撤回）' : ''}`
+}
+
 export function formatHistoryEntry(entry: HistoryEntry): string {
+  // 事件行只有时间与事件文案，不走消息模板
+  if (entry.role === 'event') {
+    return `[${formatTimestamp(entry.timestamp)}] ${entry.content}${entryAnnotations(entry)}`
+  }
   const quote = entry.quote
     ? `（引用了 [${formatTimestamp(entry.quote.timestamp)}] ${entry.quote.username} (${entry.quote.userId}) 说：${entry.quote.content}）`
     : ''
   const messageId = entry.messageId ? ` [msg:${entry.messageId}]` : ''
   const separator = quote ? '' : ' '
-  return `[${formatTimestamp(entry.timestamp)}] ${entry.username} (${entry.userId})${messageId}${quote}${separator}说：${entry.content}`
+  return `[${formatTimestamp(entry.timestamp)}] ${entry.username} (${entry.userId})${messageId}${quote}${separator}说：${entry.content}${entryAnnotations(entry)}`
 }
 
 /** 多条消息逐行拼接 */
@@ -61,7 +75,10 @@ export function formatHistoryEntries(entries: HistoryEntry[]): string {
 /** 精简行：只记消息 ID 与剔除 @bot 的原貌内容，不带时间与作者前缀——窗口触发的 content 变量用 */
 export function formatHistoryBrief(entries: HistoryEntry[]): string {
   return entries
-    .map((entry) => (entry.messageId ? `[msg:${entry.messageId}] ${entry.contentText}` : entry.contentText))
+    .map((entry) => {
+      const line = entry.messageId ? `[msg:${entry.messageId}] ${entry.contentText}` : entry.contentText
+      return `${line}${entryAnnotations(entry)}`
+    })
     .join('\n')
 }
 
