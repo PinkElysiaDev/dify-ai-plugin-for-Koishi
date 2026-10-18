@@ -1,7 +1,6 @@
 import { FireContext, JSON_PLACEHOLDER, MetaField, SessionField, VariableSource } from '../types'
-import { MessageHistory } from '../history'
+import { buildQuote, formatQuotedMessage, MessageHistory } from '../history'
 import { DifyRule } from '../types'
-import { parseTextSafe } from '../utils/session-text'
 import { channelKeyOf } from '../utils/keys'
 
 function resolveSessionField(key: SessionField, fireCtx: FireContext, now: string) {
@@ -21,8 +20,11 @@ function resolveSessionField(key: SessionField, fireCtx: FireContext, now: strin
       return session?.messageId ?? ''
     case 'content':
       return fireCtx.contentText
-    case 'quoteContent':
-      return parseTextSafe(session?.quote?.content)
+    case 'quoteContent': {
+      // 引用段完整形态（时间+作者+内容，与统一格式行同源；无引用为空串）
+      const quote = buildQuote(session)
+      return quote ? formatQuotedMessage(quote) : ''
+    }
     case 'quoteAuthorId':
       return session?.quote?.user?.id ?? ''
     case 'username':

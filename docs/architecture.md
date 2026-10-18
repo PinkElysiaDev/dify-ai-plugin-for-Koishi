@@ -472,7 +472,7 @@ global                    → {appId}:global
 | platform | 平台标识，如 onebot |
 | messageId | 触发消息的 ID（定时摘要触发为空） |
 | content | 触发文本的**消息原貌**（@ 机器人自身剔除——触发结构非消息内容，@ 其他人保留）、图片为 [image:摘要] 占位；keyword-prefix 已剥掉开头触发词（图片/@ 开头的消息做前缀感知剥离，保留前缀占位与 @；剥离为空时回退原貌全文）；合并触发为各条原貌逐行拼接；定时与密度触发为池内消息的精简行拼接（`[msg:消息ID] 内容`，无 ID 只写内容，不带时间与作者前缀） |
-| quoteContent | 被引用消息的纯文本 |
+| quoteContent | 被引用消息的引用段形态（`[时间] 昵称 (用户ID) 说：内容`，与统一格式行同源，不带消息 ID；无引用为空） |
 | quoteAuthorId | 被引用消息的作者 ID |
 | username | 发送者用户名，缺省回退 userId |
 | timestamp | 触发时刻，ISO 8601 字符串 |

@@ -54,14 +54,17 @@ function entryAnnotations(entry: HistoryEntry): string {
   return `${entry.replied ? '（已回复）' : ''}${entry.deleted ? '（已撤回）' : ''}`
 }
 
+/** 引用段本体：[时间] 昵称 (用户ID) 说：内容（quoteContent 变量与统一格式行同源，不带消息 ID） */
+export function formatQuotedMessage(quote: QuotedMessage): string {
+  return `[${formatTimestamp(quote.timestamp)}] ${quote.username} (${quote.userId}) 说：${quote.content}`
+}
+
 export function formatHistoryEntry(entry: HistoryEntry): string {
   // 事件行只有时间与事件文案，不走消息模板
   if (entry.role === 'event') {
     return `[${formatTimestamp(entry.timestamp)}] ${entry.content}${entryAnnotations(entry)}`
   }
-  const quote = entry.quote
-    ? `（引用了 [${formatTimestamp(entry.quote.timestamp)}] ${entry.quote.username} (${entry.quote.userId}) 说：${entry.quote.content}）`
-    : ''
+  const quote = entry.quote ? `（引用了 ${formatQuotedMessage(entry.quote)}）` : ''
   const messageId = entry.messageId ? ` [msg:${entry.messageId}]` : ''
   const separator = quote ? '' : ' '
   return `[${formatTimestamp(entry.timestamp)}] ${entry.username} (${entry.userId})${messageId}${quote}${separator}说：${entry.content}${entryAnnotations(entry)}`
@@ -82,7 +85,8 @@ export function formatHistoryBrief(entries: HistoryEntry[]): string {
     .join('\n')
 }
 
-function buildQuote(session: Session): QuotedMessage | undefined {
+/** 从会话的引用对象构造引用段数据（quoteContent 变量与消息条目共用） */
+export function buildQuote(session: Session): QuotedMessage | undefined {
   const quote = session.quote
   if (!quote?.user?.id) return undefined
   return {
