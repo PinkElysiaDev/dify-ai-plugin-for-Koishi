@@ -67,12 +67,12 @@ export class RuleScheduler {
     return null
   }
 
-  /** 计算规则下一次触发时刻；无 schedule 条件返回 null */
+  /** 计算规则下一次触发时刻；无 cron 条件返回 null */
   private computeNextRun(rule: DifyRule): number | null {
     const now = Date.now()
     let next: number | null = null
     for (const condition of rule.conditions) {
-      if (condition.type !== 'schedule') continue
+      if (condition.type !== 'cron') continue
       const candidate = this.nextRunOf(condition, now)
       if (candidate != null && (next == null || candidate < next)) next = candidate
     }

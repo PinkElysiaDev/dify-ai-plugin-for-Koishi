@@ -32,8 +32,8 @@ export type ConditionEntry =
   | { type: 'at-user'; userIds: string }
   | { type: 'quote-bot' }
   | { type: 'quote-user'; userIds: string }
-  | { type: 'schedule'; cron?: string; intervalMinutes?: number }
-  | { type: 'density'; densityCount?: number; densityWindowSeconds?: number }
+  | { type: 'cron'; cron?: string; intervalMinutes?: number }
+  | { type: 'frequency'; densityCount?: number; densityWindowSeconds?: number }
 
 /** 变量映射的条件分支形态：先选来源分支，再填该分支的字段（历史消息是独立分支） */
 export type VariableEntry =
@@ -93,6 +93,13 @@ const appTypeSchema = Schema.union([
   Schema.const('completion').description('文本生成')
 ])
 
+/**
+ * 存量 triggerType 改名迁移（schedule→cron、density→frequency）：
+ * 旧值在服务端校验与表单回显时洗为新值，保存落盘即为新值。
+ */
+const renamedType = (name: string, legacy: string) =>
+  Schema.union([Schema.const(name), Schema.transform(Schema.const(legacy), () => name)])
+
 /** 条件分支：下拉选类型，仅显示所选类型的字段 */
 const conditionSchema = Schema.union([
   Schema.object({
@@ -118,15 +125,15 @@ const conditionSchema = Schema.union([
     userIds: Schema.string().role('textarea').required().description('用户 ID，每行一个')
   }).default({ type: 'quote-user', userIds: '' }).description('引用指定用户'),
   Schema.object({
-    type: Schema.const('schedule').required(),
+    type: renamedType('cron', 'schedule').required(),
     cron: Schema.string().default('').description('Cron 表达式'),
     intervalMinutes: Schema.number().default(-1).min(-1).description('间隔分钟')
-  }).default({ type: 'schedule', cron: '', intervalMinutes: 0 }).description('定时'),
+  }).default({ type: 'cron', cron: '', intervalMinutes: 0 }).description('定时'),
   Schema.object({
-    type: Schema.const('density').required(),
+    type: renamedType('frequency', 'density').required(),
     densityCount: Schema.natural().default(5).description('条数阈值'),
     densityWindowSeconds: Schema.natural().default(60).description('窗口秒数')
-  }).default({ type: 'density', densityCount: 5, densityWindowSeconds: 60 }).description('消息密度')
+  }).default({ type: 'frequency', densityCount: 5, densityWindowSeconds: 60 }).description('消息频率')
 ])
 
 /**
@@ -381,19 +388,19 @@ function toCondition(entry: ConditionEntry): TriggerCondition | null {
     case 'at-bot':
     case 'quote-bot':
       return { type: entry.type }
-    case 'schedule': {
+    case 'cron': {
       const cron = entry.cron?.trim()
       const intervalMinutes = Number(entry.intervalMinutes)
       if (!cron && !(intervalMinutes > 0)) return null
       return {
-        type: 'schedule',
+        type: 'cron',
         ...(cron ? { cron } : {}),
         ...(intervalMinutes > 0 ? { intervalMinutes } : {})
       }
     }
-    case 'density':
+    case 'frequency':
       return {
-        type: 'density',
+        type: 'frequency',
         densityCount: Math.max(1, Number(entry.densityCount) || 1),
         densityWindowSeconds: Math.max(1, Number(entry.densityWindowSeconds) || 1)
       }

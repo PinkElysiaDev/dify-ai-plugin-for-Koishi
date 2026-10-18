@@ -99,7 +99,7 @@ export class MessagePool {
     for (const rule of rules) {
       for (let index = 0; index < rule.conditions.length; index++) {
         const condition = rule.conditions[index]
-        if (condition.type !== 'density') continue
+        if (condition.type !== 'frequency') continue
         if (skip?.(rule, condition, index)) continue
         if (this.countQualified(pool, rule, condition, now) >= condition.densityCount) {
           this.channels.delete(key)

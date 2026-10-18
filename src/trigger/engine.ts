@@ -193,7 +193,7 @@ export class TriggerEngine {
     this.run({
       session,
       ...sessionIdentityOf(session),
-      triggerType: 'density',
+      triggerType: 'frequency',
       rule: fire.rule,
       ...windowFieldsOf(fire.entries)
     })
@@ -244,7 +244,7 @@ export class TriggerEngine {
     this.run({
       ...poolIdentityOf(channel),
       userId,
-      triggerType: 'density',
+      triggerType: 'frequency',
       rule,
       ...windowFieldsOf(channel.entries),
       isDirect: channel.isDirect
@@ -259,7 +259,7 @@ export class TriggerEngine {
     for (const channel of this.pool.takeSchedule(rule)) {
       this.run({
         ...poolIdentityOf(channel),
-        triggerType: 'schedule',
+        triggerType: 'cron',
         rule,
         ...windowFieldsOf(channel.entries),
         isDirect: channel.isDirect
@@ -288,7 +288,7 @@ export class TriggerEngine {
     // 密度通道到期复查：达标才触发并重新冷却，未达标恢复常规判定
     const index = Number(expired.lane.slice(DENSITY_LANE_PREFIX.length))
     const condition = rule.conditions[index]
-    if (condition?.type !== 'density') return
+    if (condition?.type !== 'frequency') return
     const channel = this.pool.takeDensityChannel(rule, condition, expired.channelKey, now)
     if (channel) this.fireDensityExpiry(rule, condition, index, channel, now)
   }

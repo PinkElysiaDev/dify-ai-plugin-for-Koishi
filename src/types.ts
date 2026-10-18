@@ -10,14 +10,14 @@ export type MessageTriggerType =
   | 'quote-user'
   | 'merged'
 
-/** 非消息驱动的触发原因 */
-export type ProactiveTriggerType = 'schedule' | 'density'
+/** 非消息驱动的触发原因（triggerType 值 0.1.12 起 schedule→cron、density→frequency） */
+export type ProactiveTriggerType = 'cron' | 'frequency'
 
 export type TriggerType = MessageTriggerType | ProactiveTriggerType
 
-/** 是否由消息触发（合并触发也算）：定时与密度触发没有单一触发消息 */
+/** 是否由消息触发（合并触发也算）：定时与消息频率触发没有单一触发消息 */
 export function isMessageTrigger(type: TriggerType): boolean {
-  return type !== 'schedule' && type !== 'density'
+  return type !== 'cron' && type !== 'frequency'
 }
 
 /** 关键词条件（prefix 触发时剥离关键词作为 query，contains 保留全文） */
@@ -42,16 +42,16 @@ export interface QuoteBotCondition {
   type: 'quote-bot'
 }
 
-/** 定时触发：cron（服务器本地时区）与固定间隔分钟数二选一 */
+/** 定时触发（cron）：cron（服务器本地时区）与固定间隔分钟数二选一 */
 export interface ScheduleCondition {
-  type: 'schedule'
+  type: 'cron'
   cron?: string
   intervalMinutes?: number
 }
 
-/** 消息密度触发：窗口内消息条数达到阈值即触发 */
+/** 消息频率触发：窗口内消息条数达到阈值即触发 */
 export interface DensityCondition {
-  type: 'density'
+  type: 'frequency'
   densityCount: number
   densityWindowSeconds: number
 }

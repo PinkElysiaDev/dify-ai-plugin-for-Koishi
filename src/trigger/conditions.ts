@@ -77,7 +77,7 @@ export function evaluateCondition(
       return { type: 'quote-user', contentText: verbatim }
     }
     default:
-      // schedule / density 不是消息条件，由调度器与消息池处理
+      // cron / frequency 不是消息条件，由调度器与消息池处理
       return null
   }
 }
