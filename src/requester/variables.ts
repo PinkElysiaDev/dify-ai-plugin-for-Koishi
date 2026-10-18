@@ -21,8 +21,8 @@ function resolveSessionField(key: SessionField, fireCtx: FireContext, now: strin
     case 'content':
       return fireCtx.contentText
     case 'quoteContent': {
-      // 引用段完整形态（时间+作者+内容，与统一格式行同源；无引用为空串）
-      const quote = buildQuote(session)
+      // 引用段完整形态（时间+作者+内容，与统一格式行同源）；无引用或无 session（cron/frequency 触发）为空串
+      const quote = session ? buildQuote(session) : undefined
       return quote ? formatQuotedMessage(quote) : ''
     }
     case 'quoteAuthorId':
