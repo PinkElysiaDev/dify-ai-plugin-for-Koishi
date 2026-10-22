@@ -145,8 +145,8 @@ function resolveJsonObject(
 
 /**
  * 按规则的变量映射表构造 Dify inputs。
- * JSON 对象条目先注入（顶层键展开合并进 inputs），单条映射后注入覆盖同名键——
- * 现有单条配置行为不变，JSON 作为批量默认值。
+ * JSON 对象条目作为单一变量整体注入 inputs[字段名]（适配 Dify json_object 特性，
+ * 字段名即 Dify 侧该 object 变量的名字）；单条映射后注入覆盖同名键。
  */
 export function resolveVariables(
   rule: DifyRule,
@@ -158,7 +158,7 @@ export function resolveVariables(
   for (const binding of rule.variables) {
     if (binding.source.type !== 'json') continue
     const object = resolveJsonObject(binding.source.template, fireCtx, history, now)
-    if (object) Object.assign(inputs, object)
+    if (object) inputs[binding.field] = object
   }
   for (const binding of rule.variables) {
     if (binding.source.type === 'json') continue
