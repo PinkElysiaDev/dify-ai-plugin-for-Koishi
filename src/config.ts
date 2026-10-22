@@ -41,7 +41,7 @@ export type VariableEntry =
   | { source: 'history'; field: string; limit?: number }
   | { source: 'meta'; field: string; key: string }
   | { source: 'constant'; field: string; value: string }
-  | { source: 'json'; template: string }
+  | { source: 'json'; field: string; template: string }
 
 /** 作用域的一行：维度 + 值 */
 export interface ScopeRow {
@@ -193,8 +193,9 @@ const variableSchema = Schema.union([
   }).default({ source: 'constant', field: '', value: '' }).description('常量文本'),
   Schema.object({
     source: Schema.const('json').required(),
+    field: Schema.string().required().description('字段名'),
     template: Schema.string().role('textarea').required().description('JSON 对象')
-  }).default({ source: 'json', template: '' }).description('JSON 对象')
+  }).default({ source: 'json', field: '', template: '' }).description('JSON 对象')
 ])
 
 /**
@@ -455,16 +456,18 @@ function toScope(rows: ScopeRow[]): TriggerScope {
 
 function toVariable(entry: VariableEntry): VariableBinding | null {
   if (entry.source === 'json') {
-    // 顶层键即 inputs 字段名（无独立字段名配置）；结构校验：占位符替换为占位文本后须为合法 JSON 对象
+    // JSON 对象作为单一变量注入 inputs[field]（适配 Dify json_object 特性）；
+    // 结构校验：占位符替换为占位文本后须为合法 JSON 对象
+    const field = entry.field?.trim()
     const template = entry.template ?? ''
-    if (!template.trim()) return null
+    if (!field || !template.trim()) return null
     try {
       const probe = JSON.parse(template.replace(JSON_PLACEHOLDER, '0'))
       if (typeof probe !== 'object' || probe === null || Array.isArray(probe)) return null
     } catch {
       return null
     }
-    return { field: '', source: { type: 'json', template } }
+    return { field, source: { type: 'json', template } }
   }
   const field = entry.field?.trim()
   if (!field) return null

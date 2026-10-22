@@ -20,6 +20,7 @@ const PROBE_TIMEOUT_MS = 10_000
 
 export function apply(ctx: Context, config: Config) {
   const startedAt = Date.now()
+  ctx.logger.info('apply 进入')
   ctx.i18n.define('zh-CN', zhCN)
   ctx.i18n.define('en-US', enUS)
 
