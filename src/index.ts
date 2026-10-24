@@ -36,13 +36,20 @@ export function apply(ctx: Context, config: Config) {
   const runner = new RequestRunner(ctx, config, conversationStore, history, apps, appTypes)
   const engine = new TriggerEngine(ctx, runner, history, rules, cooldown)
 
-  ctx.on('ready', () => {
+  ctx.on('ready', async () => {
+    // 探测结果持久化缓存先回填：重载后立即按正确类型分流，不再有探测窗口
+    // （窗口期内 auto 应用回退 chat 端点，workflow/completion 应用会被 Dify 400 拒绝）
+    const cached = await ctx.database.get('dify_app_probe', {}).catch(() => [])
+    for (const row of cached) {
+      if (apps.has(row.name)) appTypes.set(row.name, row.mode)
+    }
     // 先注册触发再后台探测：探测是网络请求（自建/代理下可达数秒），
     // 阻塞 start 会让重载窗口内消息触发完全失灵；探测完成前的请求按 chat 路径回退
     engine.start()
     ctx.logger.info('插件装配完成，耗时 %dms', Date.now() - startedAt)
     const probeStart = Date.now()
-    void probeAppTypes(ctx, apps, appTypes).then(() => {
+    runner.probeTask = probeAppTypes(ctx, apps, appTypes)
+    void runner.probeTask.then(() => {
       ctx.logger.info('应用类型探测完成，耗时 %dms', Date.now() - probeStart)
     })
   })
@@ -51,7 +58,8 @@ export function apply(ctx: Context, config: Config) {
   registerMiscCommands(admin, conversationStore)
 }
 
-/** 对 appType=auto 的应用并发调 GET /info 探测类型（显式配置类型的应用不探测，无 auto 应用时整体跳过）；失败 warn 并回退 chat 路径 */
+/** 对 appType=auto 的应用并发调 GET /info 探测类型（显式配置类型的应用不探测，无 auto 应用时整体跳过）；
+ *  成功结果回写持久化缓存（下次重载直接复用），失败 warn 并回退 chat 路径 */
 async function probeAppTypes(
   ctx: Context,
   apps: Map<string, AppConfigEntry>,
@@ -66,6 +74,9 @@ async function probeAppTypes(
       try {
         const info = await client.getAppInfo()
         appTypes.set(app.name, info.mode)
+        await ctx.database
+          .upsert('dify_app_probe', [{ name: app.name, mode: info.mode, updatedAt: new Date() }])
+          .catch((error) => ctx.logger.warn('探测结果写库失败：%s', error))
         ctx.logger.info('应用 %s 类型探测：%s', app.name, info.mode)
       } catch (error) {
         ctx.logger.warn('应用 %s 类型探测失败（按 chat 处理）：%s', app.name, error)

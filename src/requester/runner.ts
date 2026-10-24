@@ -89,6 +89,9 @@ export class RequestRunner {
     private appTypes: Map<string, string>
   ) {}
 
+  /** 启动期类型探测任务：auto 应用首次请求在探测完成前等待它（settle 即放行，失败仍回退 chat） */
+  probeTask?: Promise<void>
+
   /** 应用类型：schema 显式指定优先，auto 时用探测结果（未探测到回退 chat） */
   private appTypeOf(app: AppConfigEntry): string {
     return app.appType !== 'auto' ? app.appType : this.appTypes.get(app.name) ?? FALLBACK_APP_TYPE
@@ -180,6 +183,10 @@ export class RequestRunner {
     fireCtx: FireContext,
     requestCtx: RequestContext
   ): Promise<DifyReply> {
+    // auto 应用探测未完成时等一次探测（最多探测超时），避免窗口期走错端点被 Dify 400 拒绝
+    if (app.appType === 'auto' && !this.appTypes.has(app.name) && this.probeTask) {
+      await this.probeTask.catch(() => {})
+    }
     const base = {
       inputs: requestCtx.inputs,
       response_mode: 'blocking' as const,

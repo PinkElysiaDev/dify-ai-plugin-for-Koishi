@@ -57,12 +57,12 @@ external/dify-ai/
 1. 注册 i18n → `defineTables(ctx)` 建唯一的会话绑定表
 2. `normalizeConfig(config)` 把 schema 配置规范化为应用表 + 优先级降序的规则列表
 3. 构造四个单例：`MessageHistory(config.historyLimit)` → `ConversationStore` → `RequestRunner` → `TriggerEngine`（规则注入）
-4. `ctx.on('ready')` 后：先 `engine.start()`（注册消息中间件、秒级调度 tick、监听 bot 发送事件记历史），再**后台并发探测** appType=auto 的应用（GET /info，独立 10 秒超时，结果存内存 Map，成功失败均记日志，失败回退 chat 路径；显式配置类型的应用不探测，无 auto 应用时整体跳过）——探测不阻塞触发注册，重载窗口内消息照常处理；探测完成前的请求按 chat 路径回退
+4. `ctx.on('ready')` 后：先读**应用类型探测缓存**（dify_app_probe 表，重载后立即按正确类型分流），再 `engine.start()`（注册消息中间件、秒级调度 tick、监听 bot 发送事件记历史），然后**后台并发探测** appType=auto 的应用（GET /info，独立 10 秒超时，结果存内存 Map 并回写缓存表，成功失败均记日志，失败回退 chat 路径；显式配置类型的应用不探测，无 auto 应用时整体跳过）——探测不阻塞触发注册，重载窗口内消息照常处理；缓存未命中且探测未完成时，该应用的首次请求会等待探测完成（最多探测超时）再分流，不再回退错端点
 5. 注册 `dify.conv.reset` 维护命令（authority 3）
 
 **配置改动即插件重载**：cordis 监听到配置变化会整体重新 apply 插件（重新规范化、重新探测、消息池与调度状态短暂复位），无需任何热重载接口。
 
-销毁依赖 cordis 上下文自动清理；内存态（应用类型探测结果、历史缓冲、消息池）随实例消亡。
+销毁依赖 cordis 上下文自动清理；内存态（历史缓冲、消息池）随实例消亡，应用类型探测结果持久化在 dify_app_probe 表（重载复用）。
 
 ## 3. 触发器：从消息到触发
 

@@ -7,13 +7,21 @@ export interface DifyConversationRow {
   difyConversationId: string
 }
 
+/** 应用类型探测的持久化缓存：重载后先读缓存分流，后台探测刷新 */
+export interface DifyAppProbeRow {
+  name: string
+  mode: string
+  updatedAt: Date
+}
+
 declare module 'koishi' {
   interface Tables {
     dify_conversation: DifyConversationRow
+    dify_app_probe: DifyAppProbeRow
   }
 }
 
-/** 数据库只剩会话绑定一张表：应用与规则全部由 koishi schema 配置管理 */
+/** 数据库两张表：会话绑定 + 应用类型探测缓存；应用与规则全部由 koishi schema 配置管理 */
 function defineConversationTable(ctx: Context) {
   ctx.model.extend('dify_conversation', {
     bindingKey: 'string(255)',
@@ -21,6 +29,15 @@ function defineConversationTable(ctx: Context) {
   }, { primary: 'bindingKey' })
 }
 
+function defineProbeTable(ctx: Context) {
+  ctx.model.extend('dify_app_probe', {
+    name: 'string(255)',
+    mode: 'string(32)',
+    updatedAt: 'timestamp'
+  }, { primary: 'name' })
+}
+
 export function defineTables(ctx: Context) {
   defineConversationTable(ctx)
+  defineProbeTable(ctx)
 }
