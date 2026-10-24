@@ -15,6 +15,27 @@ export const inject = { required: ['database'] }
 
 export { Config }
 
+/** 控制台插件配置页顶部说明：JSON 对象变量的占位符速查 */
+export const usage = `
+## JSON 对象变量的占位符
+
+「JSON 对象」分支的模板内可用以下占位符（整个对象注入字段名对应的单一变量）：
+
+| 占位符 | 类型 | 说明 |
+| --- | --- | --- |
+| \`{{userId}}\` \`{{botId}}\` \`{{guildId}}\` \`{{channelId}}\` \`{{platform}}\` | 字符串 | 会话身份 |
+| \`{{messageId}}\` \`{{username}}\` \`{{timestamp}}\` | 字符串 | 消息标识与作者 |
+| \`{{content}}\` | 字符串 | 消息原貌 |
+| \`{{quoteContent}}\` \`{{quoteAuthorId}}\` | 字符串 | 被引用消息（引用段 / 作者） |
+| \`{{triggerType}}\` \`{{ruleName}}\` \`{{triggerTime}}\` | 字符串 | 触发元信息 |
+| \`{{history}}\` / \`{{history:N}}\` | 字符串 | 历史消息文本，N 指定条数（缺省用全局配置） |
+| \`{{isDirect}}\` | 布尔 | 是否私聊 |
+
+- 值恰好为一个占位符（如 \`"is_private": "{{isDirect}}"\`）时保留原生类型
+- 占位符混入其他文字（如 \`"你好 {{username}}"\`）按字符串拼接，引号换行自动转义
+- 未知变量得空串
+`
+
 /** 应用类型探测的独立超时：探测是轻量 /info，不应沿用请求级长超时（Dify 不可达时拖住重载） */
 const PROBE_TIMEOUT_MS = 10_000
 

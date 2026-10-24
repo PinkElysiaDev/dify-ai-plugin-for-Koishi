@@ -16,9 +16,8 @@ import {
 export type AppTypeSetting = 'auto' | 'chat' | 'agent-chat' | 'advanced-chat' | 'workflow' | 'completion'
 
 export interface AppConfigEntry {
+  /** 应用标识：填 Dify 的应用 ID（沿用 name 字段名兼容既有绑定键与规则引用） */
   name: string
-  /** 会话绑定用的稳定标识；留空回退应用名 */
-  appId: string
   apiURL: string
   apiKey: string
   appType: AppTypeSetting
@@ -284,8 +283,7 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     apps: Schema.array(
       Schema.object({
-        name: Schema.string().required().description('应用名'),
-        appId: Schema.string().default('').description('应用 ID，会话绑定用，留空取应用名'),
+        name: Schema.string().required().description('应用 ID'),
         apiURL: Schema.string().required().role('link').description('API 地址'),
         apiKey: Schema.string().required().role('secret').description('App Key'),
         appType: appTypeSchema.default('auto').description('应用类型')
@@ -302,7 +300,7 @@ export const Config: Schema<Config> = Schema.intersect([
         name: Schema.string().required().description('规则名'),
         enabled: Schema.boolean().default(true).description('启用'),
         priority: Schema.number().default(-1).description('优先级，大者先匹配'),
-        app: Schema.string().required().description('应用名'),
+          app: Schema.string().required().description('应用 ID'),
         conversationScope: Schema.union([
           Schema.const('per-guild').description('按群聊'),
           Schema.const('per-user').description('按用户'),

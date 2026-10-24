@@ -165,9 +165,7 @@ export class ConversationStore {
     for (const row of matched) {
       if (row.difyConversationId) {
         const { appId } = this.parseBindingKey(row.bindingKey)
-        // 首段可能是应用 ID 或应用名（appId 留空回退名），两者都查
-        const app = this.apps.get(appId) ?? this.findByAppId(appId)
-        const client = app && createDifyClient(this.ctx, app)
+        const client = appId && this.apps.has(appId) ? createDifyClient(this.ctx, this.apps.get(appId)!) : undefined
         if (client) {
           await client
             .deleteConversation(row.difyConversationId, this.difyUserOfBindingKey(row.bindingKey))
@@ -178,13 +176,5 @@ export class ConversationStore {
       reset++
     }
     return reset
-  }
-
-  /** 按应用 ID（apps 配置的 appId 字段）反查应用 */
-  private findByAppId(appId: string): AppConfigEntry | undefined {
-    for (const app of this.apps.values()) {
-      if (app.appId && app.appId === appId) return app
-    }
-    return undefined
   }
 }

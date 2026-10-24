@@ -130,22 +130,22 @@ query 一律是统一消息格式；原始信息通过 content 变量映射获�
 
 ## 4. 状态机：会话怎么绑定
 
-**绑定维度是应用而非规则**——指向同一应用、同一会话的多条规则共享同一段 Dify 对话（不同应用的会话不能混用，这正是 appId 参与编码的原因）。
+**绑定维度是应用而非规则**——指向同一应用、同一会话的多条规则共享同一段 Dify 对话（不同应用的会话不能混用，这正是应用标识参与编码的原因）。
 
 **bindingKey** 编码规则：
 
 ```
-base = {appId}:{platform}:{selfId}
+base = {应用标识}:{platform}:{selfId}
 
 per-user（群内按用户区分）→ base:user:{guildId}:{userId}   私聊 → base:private:{userId}
 per-guild（默认）          → base:guild:{guildId ?? channelId}
 per-channel               → base:channel:{channelId}
-global                    → {appId}:global
+global                    → {应用标识}:global
 ```
 
 | 片段 | 是什么 | 来源 |
 |---|---|---|
-| appId | 应用配置的「应用 ID」，留空取应用名 | runner 以 appId ?? 应用名 传入 |
+| 应用标识 | 应用配置的「应用 ID」（name 字段，填 Dify 应用 ID） | runner 以 app.name 传入 |
 | `platform` | 适配器平台标识（接 QQ 为 `onebot`） | session.platform |
 | `selfId` | bot 自身账号（QQ 号）；定时触发为池内最近一条消息所属的 bot | session.selfId |
 | guildId | 群号；私聊/无群概念平台回退 channelId（形如 `private:{QQ号}`） | session |
@@ -159,7 +159,7 @@ global                    → {appId}:global
 | channel | `koishi:{platform}:{channelId}` |
 | global | `koishi` |
 
-> user 一致性很重要：Dify 的会话续接、文件上传等操作都校验 user 字段，全链路必须同一值。私聊恒按 user 维处理。重置时（`resetWhere`）从 bindingKey 反解出应用 ID（按 appId 或应用名反查配置取凭据）与 difyUser（调删除接口）；private 段是独立会话，不参与按群重置。
+> user 一致性很重要：Dify 的会话续接、文件上传等操作都校验 user 字段，全链路必须同一值。私聊恒按 user 维处理。重置时（`resetWhere`）从 bindingKey 反解出应用标识（按配置应用表反查凭据）与 difyUser（调删除接口）；private 段是独立会话，不参与按群重置。
 
 ## 5. Dify API 调用说明（blocking 单一模式）
 
@@ -432,7 +432,7 @@ global                    → {appId}:global
 
 `RequestRunner.run(fireCtx)`：
 
-1. 从配置应用表取凭据（规则引用的应用名未定义时 warn 返回）→ `createDifyClient(ctx, app, config.requestTimeout)`
+1. 从配置应用表取凭据（规则引用的应用 ID 未定义时 warn 返回）→ `createDifyClient(ctx, app, config.requestTimeout)`
 2. 计算 bindingKey / difyUser → `resolveVariables` 构造 inputs → `config.uploadFiles` 开启且为消息触发时跑文件上传管线
 3. **dispatch**（按应用类型分流——schema 显式指定优先，auto 用启动探测结果；见 §5.3）；失败记日志，`sendErrors` 开启时向会话发错误提示
 4. 空回复记 warn 返回；否则 `renderReply`（行为读全局 config）→ `deliver`
@@ -603,8 +603,8 @@ global                    → {appId}:global
 
 | 分组 | 字段 |
 |---|---|
-| 应用配置 | 应用列表：应用名 / 应用 ID（会话绑定用，留空取应用名）/ API 地址 / App Key / 应用类型（默认自动探测） |
-| 触发规则 | 规则名 / 启用 / 优先级（大者先匹配）/ 应用名 / 会话粒度 + 条件分支 + 作用域表格 + 变量映射 |
+| 应用配置 | 应用列表：应用 ID（name 字段，填 Dify 应用 ID）/ API 地址 / App Key / 应用类型（默认自动探测） |
+| 触发规则 | 规则名 / 启用 / 优先级（大者先匹配）/ 应用 ID / 会话粒度 + 条件分支 + 作用域表格 + 变量映射 |
 | 回复行为 | 解析回复中的消息元素 / 引用触发消息（布尔开关，开启时展示「回复耗时多少秒才引用」，0 或 -1 总是引用）/ 分段长度（0 或 -1 不分段）/ 上传消息中的文件（布尔开关，开启时展示「数量上限」与「单文件大小上限 MB」，0 或 -1 均为不限）——开关与条件字段均为顶层平铺 |
 | 运行参数 | 请求超时（默认 300000ms）/ 历史消息条数（默认 20）/ 失败时提示错误 / 触发后冷却（条件分支：关闭，或固定窗口 + 冷却秒数，或滑动窗口 + 最小/最大冷却秒数，默认关闭） |
 
@@ -615,7 +615,7 @@ koishi.yml 等价示例（配置页填写后生成同样的数据）：
 ```yaml
 dify-ai:
   apps:
-    - name: my-flow
+    - name: app-xxxxxxxx            # 应用 ID（Dify 控制台的应用 ID）
       apiURL: https://api.dify.ai/v1
       apiKey: app-xxxxxxxx
       appType: auto

@@ -109,7 +109,7 @@ export class RequestRunner {
     if (!client) return
 
     const requestCtx: RequestContext = {
-      bindingKey: this.conversationStore.computeBindingKey(app.appId || app.name, rule, fireCtx),
+      bindingKey: this.conversationStore.computeBindingKey(app.name, rule, fireCtx),
       difyUser: this.conversationStore.computeDifyUser(rule, fireCtx),
       inputs: resolveVariables(rule, fireCtx, this.history),
       uploadedFiles: []
