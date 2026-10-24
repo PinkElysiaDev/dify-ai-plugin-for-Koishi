@@ -80,6 +80,7 @@ export interface Config {
   requestTimeout: number
   historyLimit: number
   sendErrors: boolean
+  debugLogging: boolean
   cooldown: CooldownEntry
 }
 
@@ -355,6 +356,7 @@ export const Config: Schema<Config> = Schema.intersect([
     requestTimeout: Schema.natural().role('ms').default(300000).description('请求超时'),
     historyLimit: Schema.natural().default(20).min(1).description('历史消息条数'),
     sendErrors: Schema.boolean().default(false).description('失败时提示错误'),
+    debugLogging: Schema.boolean().default(false).description('输出错误调试日志'),
     cooldown: cooldownSchema.default({ mode: 'off' }).description('触发后冷却')
   }).description('运行参数')
 ]) as Schema<Config>

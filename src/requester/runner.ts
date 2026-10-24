@@ -14,7 +14,7 @@ import { ConversationStore } from '../state/conversation'
 import { resolveVariables } from './variables'
 import { renderReply } from './render'
 import { annotateDroppedPlaceholders } from '../utils/session-text'
-import { errorMessage } from '../utils/errors'
+import { errorDetail, errorMessage } from '../utils/errors'
 
 /** 一次请求的产出（blocking 响应解析后的统一形态） */
 interface DifyReply {
@@ -121,9 +121,14 @@ export class RequestRunner {
     try {
       reply = await this.dispatch(app, client, fireCtx, requestCtx)
     } catch (error) {
-      this.ctx.logger.warn('规则 %s 请求失败：%s', rule.name, error)
+      if (this.config.debugLogging) {
+        this.ctx.logger.debug('规则 %s 请求失败详情：%s', rule.name, errorDetail(error))
+      }
+      this.ctx.logger.warn('规则 %s 请求失败：%s', rule.name, errorMessage(error))
       if (this.config.sendErrors && fireCtx.session) {
-        await fireCtx.session.send(`Dify 请求失败：${errorMessage(error)}`).catch(() => {})
+        await fireCtx.session
+          .send(fireCtx.session.text('dify-ai.errors.request-failed', [errorMessage(error)]))
+          .catch(() => {})
       }
       return
     }
