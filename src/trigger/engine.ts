@@ -173,6 +173,8 @@ export class TriggerEngine {
   }
 
   private fireMessage(rule: DifyRule, session: Session, condition: ConditionMatched, entry: HistoryEntry | null) {
+    // query 先渲染再标记：本次请求不该看到（已回复）注记，注记是给后续密度/定时窗口的
+    const queryText = entry ? formatHistoryEntry(entry) : ''
     // 即时触发即消费：entry 与池内条目同引用，密度计数不再累计、摘要行尾注记已回复
     if (entry) entry.replied = true
     this.beginCooldown(channelKeyOf(session.platform, session.channelId), rule.name, 'message')
@@ -182,7 +184,7 @@ export class TriggerEngine {
       triggerType: condition.type,
       rule,
       // query 为该条消息的统一格式单行；纯 @ / 纯引用等无文本消息 entry 为空，由请求器占位兜底
-      queryText: entry ? formatHistoryEntry(entry) : '',
+      queryText,
       contentText: condition.contentText
     })
   }
@@ -201,13 +203,14 @@ export class TriggerEngine {
 
   /** 冷却到期：把缓冲内的触发消息合并为一次触发，session 取首条（供投递与文件上传） */
   private fireMerged(rule: DifyRule, buffer: PendingMessage[]) {
+    // 渲染先行：本次合并请求的 query/content 不带（已回复）注记
+    const queryText = joinNonEmpty(buffer.map((item) => (item.entry ? formatHistoryEntry(item.entry) : '')))
+    const contentText = joinNonEmpty(buffer.map((item) => item.contentText))
     // 合并触发即消费：缓冲条目与池内同引用，标记已回复
     for (const item of buffer) {
       if (item.entry) item.entry.replied = true
     }
     const first = buffer[0]
-    const queryText = joinNonEmpty(buffer.map((item) => (item.entry ? formatHistoryEntry(item.entry) : '')))
-    const contentText = joinNonEmpty(buffer.map((item) => item.contentText))
     this.beginCooldown(channelKeyOf(first.session.platform, first.session.channelId), rule.name, 'message')
     this.run({
       session: first.session,
