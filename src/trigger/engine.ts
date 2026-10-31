@@ -1,5 +1,5 @@
 import { Context, Next, Session } from 'koishi'
-import { CooldownSetting, DensityCondition, DifyRule, FireContext } from '../types'
+import { CooldownSetting, CommandCondition, DensityCondition, DifyRule, FireContext } from '../types'
 import {
   MessageHistory,
   buildHistoryEntry,
@@ -102,8 +102,52 @@ export class TriggerEngine {
     })
     // 群事件（戳一戳/入退群等）入池当上下文，不进历史变量
     registerPoolEvents(this.ctx, this.pool)
+    this.registerCommands()
     this.scheduler.sync(this.rules)
     this.ctx.logger.info('已加载 %d 条启用规则', this.rules.length)
+  }
+
+  /** 把规则内的指令条件注册为顶层 koishi 指令（同名只注册首个，指令触发是显式意图不参与冷却） */
+  private registerCommands() {
+    const registered = new Set<string>()
+    for (const rule of this.rules) {
+      for (const condition of rule.conditions) {
+        if (condition.type !== 'command') continue
+        if (registered.has(condition.command)) {
+          this.ctx.logger.warn('指令 %s 已被注册，跳过后续规则', condition.command)
+          continue
+        }
+        registered.add(condition.command)
+        this.ctx.command(condition.command).action(({ session, args }) => {
+          if (session) void this.fireCommand(rule, session, args ?? [])
+        })
+      }
+    }
+  }
+
+  /** 指令触发：位置参数按序覆盖单值变量映射，数量不符报错（本地化），无参按默认取值 */
+  private async fireCommand(rule: DifyRule, session: Session, args: string[]) {
+    if (!matchScope(rule.scope, session)) return
+    if (args.length > 0) {
+      const bindings = rule.variables.filter((binding) => binding.source.type !== 'json')
+      if (args.length !== bindings.length) {
+        await session
+          .send(session.text('dify-ai.errors.command-args-mismatch', [bindings.length, args.length]))
+          .catch(() => {})
+        return
+      }
+    }
+    const argsText = args.join(' ')
+    this.run({
+      session,
+      ...sessionIdentityOf(session),
+      triggerType: 'command',
+      rule,
+      // 无参时空串由请求器占位兜底
+      queryText: argsText,
+      contentText: argsText,
+      commandArgs: args.length ? args : undefined
+    })
   }
 
   private handleMessage(session: Session, next: Next) {

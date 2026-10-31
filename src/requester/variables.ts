@@ -168,5 +168,12 @@ export function resolveVariables(
     const value = resolveSource(binding.source, fireCtx, history, now)
     if (value !== undefined) inputs[binding.field] = value
   }
+  // 指令触发的位置参数：按序覆盖单值映射的值（JSON 分支不占参数位）
+  if (fireCtx.commandArgs) {
+    const bindings = rule.variables.filter((binding) => binding.source.type !== 'json')
+    fireCtx.commandArgs.forEach((arg, index) => {
+      inputs[bindings[index].field] = arg
+    })
+  }
   return inputs
 }

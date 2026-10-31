@@ -9,6 +9,7 @@ export type MessageTriggerType =
   | 'quote-bot'
   | 'quote-user'
   | 'merged'
+  | 'command'
 
 /** 非消息驱动的触发原因（triggerType 值 0.1.12 起 schedule→cron、density→frequency） */
 export type ProactiveTriggerType = 'cron' | 'frequency'
@@ -42,6 +43,12 @@ export interface QuoteBotCondition {
   type: 'quote-bot'
 }
 
+/** 指令触发：指令名注册为顶层 koishi 指令，位置参数按序覆盖单值变量映射 */
+export interface CommandCondition {
+  type: 'command'
+  command: string
+}
+
 /** 定时触发（cron）：cron（服务器本地时区）与固定间隔分钟数二选一 */
 export interface ScheduleCondition {
   type: 'cron'
@@ -65,6 +72,7 @@ export type TriggerCondition =
   | UserCondition
   | AtBotCondition
   | QuoteBotCondition
+  | CommandCondition
   | ScheduleCondition
   | DensityCondition
 
@@ -155,4 +163,6 @@ export interface FireContext {
   imageUrls?: string[]
   /** 无 session 的主动触发（定时/密度到期）从消息池透传的私聊标记：会话绑定与 isDirect 变量用 */
   isDirect?: boolean
+  /** 指令触发的位置参数：按序覆盖单值变量映射的值（JSON 分支不占位） */
+  commandArgs?: string[]
 }

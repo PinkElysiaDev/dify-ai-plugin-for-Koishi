@@ -31,6 +31,7 @@ export type ConditionEntry =
   | { type: 'at-user'; userIds: string }
   | { type: 'quote-bot' }
   | { type: 'quote-user'; userIds: string }
+  | { type: 'command'; command: string }
   | { type: 'cron'; cron?: string; intervalMinutes?: number }
   | { type: 'frequency'; densityCount?: number; densityWindowSeconds?: number }
 
@@ -124,6 +125,10 @@ const conditionSchema = Schema.union([
     type: Schema.const('quote-user').required(),
     userIds: Schema.string().role('textarea').required().description('用户 ID，每行一个')
   }).default({ type: 'quote-user', userIds: '' }).description('引用指定用户'),
+  Schema.object({
+    type: Schema.const('command').required(),
+    command: Schema.string().required().description('指令名')
+  }).default({ type: 'command', command: '' }).description('指令'),
   Schema.object({
     type: renamedType('cron', 'schedule').required(),
     cron: Schema.string().default('').description('Cron 表达式'),
@@ -390,6 +395,11 @@ function toCondition(entry: ConditionEntry): TriggerCondition | null {
     case 'at-bot':
     case 'quote-bot':
       return { type: entry.type }
+    case 'command': {
+      const command = entry.command?.trim()
+      if (!command) return null
+      return { type: 'command', command }
+    }
     case 'cron': {
       const cron = entry.cron?.trim()
       const intervalMinutes = Number(entry.intervalMinutes)

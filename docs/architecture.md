@@ -76,6 +76,7 @@ external/dify-ai/
 | at-user | @ 了 userIds 中任一用户 | 该条消息的统一格式（§8） |
 | quote-bot | 引用的消息作者是机器人 | 该条消息的统一格式（§8） |
 | quote-user | 引用的作者在 userIds 内 | 该条消息的统一格式（§8） |
+| command | 发送指定指令（条件里的指令名注册为顶层 koishi 指令） | 参数原文拼接（无参由占位串兜底）。位置参数**按序覆盖单值变量映射**的值（JSON 分支不占位）；参数数量不符（多于或少于单值映射数）回复本地化报错，无参按默认取值；显式意图，不参与冷却但受规则作用域限制 |
 | cron | 到点时把消息池内该规则作用域覆盖的各频道消息合并为一次请求；作用域内无消息则跳过 | 池内该频道全部消息按统一格式逐行拼接（§8） |
 | frequency | 池内时效窗口内的真人消息数达到阈值即触发 | 触发即取走该频道全部池内消息，按统一格式逐行拼接（§8） |
 
@@ -487,7 +488,7 @@ global                    → {应用标识}:global
 
 | 变量 | 内容 |
 |---|---|
-| triggerType | 触发类型：keyword-prefix / keyword-contains / at-bot / at-user / quote-bot / quote-user / merged（冷却合并触发）/ cron / frequency（0.1.12 起 schedule→cron、density→frequency，存量条件自动迁移） |
+| triggerType | 触发类型：keyword-prefix / keyword-contains / at-bot / at-user / quote-bot / quote-user / merged（冷却合并触发）/ command / cron / frequency（0.1.12 起 schedule→cron、density→frequency，存量条件自动迁移） |
 | ruleName | 命中的规则名 |
 | triggerTime | 触发时刻，ISO 8601 字符串 |
 
