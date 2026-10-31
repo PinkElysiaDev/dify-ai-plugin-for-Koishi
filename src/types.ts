@@ -84,6 +84,7 @@ export interface TriggerScope {
 export type SessionField =
   | 'userId'
   | 'botId'
+  | 'botName'
   | 'guildId'
   | 'channelId'
   | 'platform'

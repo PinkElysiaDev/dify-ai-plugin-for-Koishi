@@ -23,7 +23,7 @@ export const usage = `
 
 | 占位符 | 类型 | 说明 |
 | --- | --- | --- |
-| \`{{userId}}\` \`{{botId}}\` \`{{guildId}}\` \`{{channelId}}\` \`{{platform}}\` | 字符串 | 会话身份 |
+| \`{{userId}}\` \`{{botId}}\` \`{{botName}}\` \`{{guildId}}\` \`{{channelId}}\` \`{{platform}}\` | 字符串 | 会话身份 |
 | \`{{messageId}}\` \`{{username}}\` \`{{timestamp}}\` | 字符串 | 消息标识与作者 |
 | \`{{content}}\` | 字符串 | 消息原貌 |
 | \`{{quoteContent}}\` \`{{quoteAuthorId}}\` | 字符串 | 被引用消息（引用段 / 作者） |

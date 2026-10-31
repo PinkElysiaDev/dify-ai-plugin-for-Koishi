@@ -10,6 +10,9 @@ function resolveSessionField(key: SessionField, fireCtx: FireContext, now: strin
       return fireCtx.userId ?? session?.userId ?? ''
     case 'botId':
       return fireCtx.selfId ?? session?.selfId ?? ''
+    case 'botName':
+      // 昵称来自适配器登录信息（平台未提供时回退 bot 账号）
+      return session?.bot?.user?.name || session?.bot?.user?.nick || fireCtx.selfId
     case 'guildId':
       return fireCtx.guildId ?? ''
     case 'channelId':

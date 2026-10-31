@@ -145,6 +145,7 @@ const sessionKeySchema = Schema.union([
   Schema.const('none').description('无'),
   Schema.const('userId').description('用户 ID'),
   Schema.const('botId').description('Bot ID'),
+  Schema.const('botName').description('Bot 昵称'),
   Schema.const('guildId').description('群聊 ID'),
   Schema.const('channelId').description('频道 ID'),
   Schema.const('platform').description('平台'),
